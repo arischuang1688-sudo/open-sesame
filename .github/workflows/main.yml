@@ -1,0 +1,112 @@
+name: Daily Taiwan Stock Update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 7 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Update Taiwan stock data
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.request
+          from datetime import datetime, timezone
+
+          URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+
+          req = urllib.request.Request(
+              URL,
+              headers={"User-Agent": "Mozilla/5.0"}
+          )
+
+          with urllib.request.urlopen(req, timeout=30) as r:
+              data = json.loads(r.read().decode("utf-8"))
+
+          stocks = []
+
+          for x in data:
+              try:
+                  code = x.get("Code", "")
+                  name = x.get("Name", "")
+
+                  close = float(str(x.get("ClosingPrice", "0")).replace(",", ""))
+                  volume = float(str(x.get("TradeVolume", "0")).replace(",", "")) / 1000
+
+                  change_text = str(x.get("Change", "0")).replace(",", "")
+                  try:
+                      change = float(change_text)
+                  except:
+                      change = 0
+
+                  if not code or not name or close <= 0:
+                      continue
+
+                  stocks.append({
+                      "code": code,
+                      "name": name,
+                      "close": close,
+                      "volume": round(volume, 2),
+                      "change": change,
+                      "trust_net": 0,
+                      "month_week": "待計算",
+                      "kd": "待計算",
+                      "relative": "待計算",
+                      "margin": "待計算",
+                      "status": "觀察"
+                  })
+
+              except Exception:
+                  continue
+
+          stocks.sort(
+              key=lambda x: (x["change"], x["volume"]),
+              reverse=True
+          )
+
+          result = {
+              "updated_at": datetime.now(timezone.utc).isoformat(),
+              "market": {
+                  "source": "TWSE",
+                  "finance_today": None
+              },
+              "stocks": stocks[:200]
+          }
+
+          with open("data/dashboard.json", "w", encoding="utf-8") as f:
+              json.dump(
+                  result,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+          PY
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add data/dashboard.json
+
+          if git diff --cached --quiet; then
+            echo "No data changes."
+          else
+            git commit -m "Daily Taiwan stock update"
+            git push
+          fi
