@@ -17,7 +17,7 @@ th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;font-size:13px;v
 @media(max-width:700px){.grid{grid-template-columns:repeat(2,1fr)}.head{flex-direction:column;align-items:flex-start}}
 </style></head>
 <body><main>
-<section class="head card"><div><h1>🔥 AI 台股六條件選股 Dashboard</h1><div class="muted">每日盤後自動更新｜價量・投信・KD・月週線・融資・相對大盤</div></div><button onclick="loadData()">↻ 更新</button></section>
+<section class="head card"><div><h1>🔥 AI 台股六條件選股 Dashboard</h1><div class="muted">每日盤後自動更新｜價量・投信・KD・月週線・融資・相對大盤</div></div><div style="text-align:right"><button id="reload" onclick="loadData()">↻ 更新</button><div id="loadmsg" class="muted" style="margin-top:6px"></div></div></section>
 <div id="summary" class="grid"></div>
 <div class="table"><table><thead><tr><th>排名</th><th>股票</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>投信</th><th>月/週</th><th>KD</th><th>相對大盤</th><th>融資</th><th>訊號</th><th>最新理由(做多誘因)</th></tr></thead><tbody id="tbody"><tr><td colspan="12">載入中…</td></tr></tbody></table></div>
 <div class="hint"><b>📈 操作提示:</b>當<b>大盤趨勢向上</b>時,順著 <b>60 日均線(60K)</b>操作——指數與個股站上 60K 且 60K 上揚時偏多順勢;跌破 60K 或 60K 走平下彎時保守應對、嚴設停損。<br>
@@ -30,7 +30,11 @@ const fmt=(n,d=0)=>n==null?'—':Number(n).toLocaleString('zh-TW',{minimumFracti
 const pct=n=>n==null?'':`(${n>0?'+':''}${n}%)`;
 function condChips(c){if(!c)return'';const def=[['ma','月週線↑'],['kd','KD交叉'],['trust','投信買超'],['market','大盤轉強']];
 return `<div class="chips">${def.map(([k,t])=>`<span class="chip ${c[k]?'ok':''}">${c[k]?'✓':'✗'}${t}</span>`).join('')}</div>`}
-function loadData(){const s=document.getElementById('tbody');fetch('data/dashboard.json?ts='+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(d=>{
+function loadData(){const s=document.getElementById('tbody'),btn=document.getElementById('reload'),msg=document.getElementById('loadmsg');
+if(btn){btn.disabled=true;btn.textContent='↻ 更新中…'}
+fetch('data/dashboard.json?ts='+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(d=>{
+if(btn){btn.disabled=false;btn.textContent='↻ 更新'}
+if(msg)msg.textContent=`已重新載入 ${new Date().toLocaleTimeString('zh-TW')}｜資料為每日盤後更新`;
 const q=d.market?.quote,mg=d.market?.margin;
 const trendTag=q?(q.trend_up==null?`<span class="tag wait">${P}</span>`:q.trend_up?'<span class="tag buy">趨勢向上</span>':'<span class="tag wait">趨勢偏弱</span>'):`<span class="tag wait">${P}</span>`;
 const k60=q&&q.ma60!=null?(q.above_ma60?'站上60K':'跌破60K'):'';
@@ -50,6 +54,6 @@ const volTag=x.vol_surge?` <span class="tag vol">量增${x.vol_ratio?` ${x.vol_r
 const mgTag=x.margin_flag?` <span class="tag ${x.margin_flag==='大增'?'mup':'mdn'}">融資${x.margin_flag}</span>`:'';
 const reason=x.reason?`<div class="reason">🚀 ${x.reason}${x.news===P?`<div class="muted">新聞摘要:${P}</div>`:x.news?`<div>${x.news}</div>`:''}</div>`:'<span class="muted">—</span>';
 return `<tr><td>${i+1}</td><td><b>${x.code} ${x.name}</b></td><td>${x.close??'—'}</td><td class="${x.change>0?'r':x.change<0?'g':''}">${x.change>0?'+':''}${x.change??'—'} ${pct(x.change_pct)}</td><td>${x.volume?fmt(x.volume)+'張':'—'}${volTag}</td><td class="${x.trust_net>0?'r':x.trust_net<0?'g':''}">${x.trust_net!=null?fmt(x.trust_net)+'張':P}</td><td>${x.month_week||'待計算'}</td><td>${x.kd||'待計算'}</td><td class="${x.outperform?'r':''}">${x.relative||'待計算'}</td><td>${x.margin||'待計算'}${mgTag}</td><td>${sig}${condChips(x.conditions)}</td><td>${reason}</td></tr>`}).join('');
-}).catch(e=>{s.innerHTML='<tr><td colspan="12">尚未產生資料,請到 GitHub Actions 手動執行一次更新。</td></tr>'})}
+}).catch(e=>{if(btn){btn.disabled=false;btn.textContent='↻ 更新'}if(msg)msg.textContent='載入失敗,請稍後再試';s.innerHTML='<tr><td colspan="12">尚未產生資料,請到 GitHub Actions 手動執行一次更新。</td></tr>'})}
 loadData();
 </script></body></html>
