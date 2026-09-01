@@ -69,24 +69,24 @@ jobs:
               print(f"[warn] FMTQIK date unavailable: {e}")
 
           print(f"[info] Latest currently available TWSE data: STOCK_DAY_ALL={stock_date}, FMTQIK={market_date}")
-          print("[info] Different TWSE datasets may publish at different times; workflow will use each source's latest available data.")
           PY
 
       - name: 60% Download market data and calculate technical analysis
         run: python scripts/update_data.py
 
-      - name: 85% Finalize ranking and source dates
+      - name: 80% Strict same-trading-day validation
         run: |
           python - <<'PY'
-          import json, urllib.request
+          import json, urllib.request, sys
 
           p = "data/dashboard.json"
           with open(p, encoding="utf-8") as f:
               d = json.load(f)
 
-          stocks = d.get("stocks", [])
-          stocks.sort(key=lambda x: (bool(x.get("priority")), x.get("cond_count", 0), x.get("change_pct", 0), x.get("volume", 0)), reverse=True)
-          d["stocks"] = stocks
+          def get(url):
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read().decode("utf-8"))
 
           def roc_to_iso(v):
               s = str(v or "").replace("/", "").replace(".", "")
@@ -94,36 +94,99 @@ jobs:
                   return f"{int(s[:3])+1911:04d}-{s[3:5]}-{s[5:7]}"
               return None
 
-          stock_date = None
-          try:
-              req = urllib.request.Request(
-                  "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-                  headers={"User-Agent": "Mozilla/5.0"})
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  rows = json.loads(r.read().decode("utf-8"))
-              dates = [roc_to_iso(x.get("Date")) for x in rows if x.get("Date")]
-              dates = [x for x in dates if x]
-              stock_date = max(dates) if dates else None
-          except Exception as e:
-              print(f"[warn] cannot annotate STOCK_DAY_ALL date: {e}")
-
-          market = d.get("market", {})
+          # Market quote is the canonical latest trading day for this publication.
+          market = d.get("market") or {}
           quote = market.get("quote") or {}
+          base_date = quote.get("date")
+          trust_date = d.get("trust_date")
           margin = market.get("margin") or {}
           margin_hist = margin.get("history") or []
-          d["source_dates"] = {
-              "stock_quote": stock_date,
-              "market_index": quote.get("date"),
-              "institutional": d.get("trust_date"),
-              "margin": margin_hist[-1].get("date") if margin_hist else None,
-              "generated_at": d.get("updated_at"),
-              "note": "各 TWSE 資料集發布時間不同，本頁使用各來源目前可取得的最新資料。"
-          }
+          margin_date = margin_hist[-1].get("date") if margin_hist else None
 
+          # STOCK_DAY_ALL must explicitly report the same latest trading day.
+          stock_rows = get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL")
+          stock_dates = [roc_to_iso(x.get("Date")) for x in stock_rows if x.get("Date")]
+          stock_dates = [x for x in stock_dates if x]
+          stock_date = max(stock_dates) if stock_dates else None
+
+          dates = {
+              "stock_quote": stock_date,
+              "market_index": base_date,
+              "institutional": trust_date,
+              "margin": margin_date,
+          }
+          print(f"[validate] source dates={dates}")
+
+          if not base_date:
+              sys.exit("VALIDATION FAILED: market trading date missing")
+          missing = [k for k,v in dates.items() if not v]
+          if missing:
+              sys.exit("VALIDATION FAILED: missing source dates: " + ", ".join(missing))
+          mismatch = {k:v for k,v in dates.items() if v != base_date}
+          if mismatch:
+              sys.exit(f"VALIDATION FAILED: mixed trading dates; base={base_date}, mismatch={mismatch}")
+
+          stocks = d.get("stocks") or []
+          if len(stocks) < 30:
+              sys.exit(f"VALIDATION FAILED: only {len(stocks)} stocks produced")
+
+          # Validate base quote integrity against STOCK_DAY_ALL itself.
+          by_code = {str(x.get("Code", "")).strip(): x for x in stock_rows}
+          errors = []
+          checked = 0
+          for s in stocks[:30]:
+              code = str(s.get("code", "")).strip()
+              src = by_code.get(code)
+              if not src:
+                  errors.append(f"{code}: missing from STOCK_DAY_ALL")
+                  continue
+              def num(v):
+                  try: return float(str(v).replace(",", "").replace("+", ""))
+                  except: return None
+              src_close = num(src.get("ClosingPrice"))
+              out_close = num(s.get("close"))
+              src_vol = num(src.get("TradeVolume"))
+              out_vol = num(s.get("volume"))
+              if src_close is None or out_close is None or abs(src_close-out_close) > 0.0001:
+                  errors.append(f"{code}: close mismatch source={src_close} output={out_close}")
+              if src_vol is not None and out_vol is not None and abs(src_vol/1000-out_vol) > 0.02:
+                  errors.append(f"{code}: volume mismatch source={src_vol/1000} output={out_vol}")
+              checked += 1
+
+          if errors:
+              print("\n".join("[error] " + x for x in errors[:20]))
+              sys.exit(f"VALIDATION FAILED: {len(errors)} stock quote mismatches")
+
+          d["validation"] = {
+              "status": "passed",
+              "trading_date": base_date,
+              "same_day_sources": True,
+              "stock_quotes_checked": checked,
+              "policy": "Only publish when stock quote, market index, institutional and margin dates match."
+          }
+          d["source_dates"] = {
+              **dates,
+              "generated_at": d.get("updated_at"),
+              "note": f"嚴格同交易日驗證已通過：所有核心 TWSE 資料均為 {base_date}。"
+          }
+          with open(p, "w", encoding="utf-8") as f:
+              json.dump(d, f, ensure_ascii=False, indent=2)
+          print(f"[validate] PASSED trading_date={base_date}, stock_quotes_checked={checked}")
+          PY
+
+      - name: 85% Finalize ranking
+        run: |
+          python - <<'PY'
+          import json
+          p = "data/dashboard.json"
+          with open(p, encoding="utf-8") as f:
+              d = json.load(f)
+          stocks = d.get("stocks", [])
+          stocks.sort(key=lambda x: (bool(x.get("priority")), x.get("cond_count", 0), x.get("change_pct", 0), x.get("volume", 0)), reverse=True)
+          d["stocks"] = stocks
           with open(p, "w", encoding="utf-8") as f:
               json.dump(d, f, ensure_ascii=False, indent=2)
           print(f"[rank] finalized {len(stocks)} stocks")
-          print(f"[dates] {d['source_dates']}")
           PY
 
       - name: 95% Publish dashboard data
@@ -134,9 +197,9 @@ jobs:
           if git diff --cached --quiet; then
             echo "No data changes."
           else
-            git commit -m "Daily Taiwan stock update"
+            git commit -m "Daily Taiwan stock update (validated)"
             git push
           fi
 
       - name: 100% Update workflow finished
-        run: echo "Open Sesame update workflow completed successfully."
+        run: echo "Open Sesame update workflow completed successfully with strict TWSE validation."
