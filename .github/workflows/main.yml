@@ -3,7 +3,8 @@ name: Daily Taiwan Stock Update
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 7 * * 1-5"
+    - cron: "5 21 * * *"
+      timezone: "Asia/Taipei"
 
 permissions:
   contents: write
