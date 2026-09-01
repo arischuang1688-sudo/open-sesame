@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       request_id:
-        description: "Web request ID used for live progress tracking"
+        description: "Web request ID"
         required: false
         type: string
   schedule:
@@ -15,22 +15,56 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: open-sesame-data-update
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
       - name: 10% Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 15% Cooldown guard
+        id: cooldown
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          p='data/dashboard.json'
+          skip=False
+          try:
+            d=json.load(open(p,encoding='utf-8'))
+            t=datetime.fromisoformat(str(d.get('updated_at','')).replace('Z','+00:00'))
+            age=(datetime.now(timezone.utc)-t.astimezone(timezone.utc)).total_seconds()
+            skip=0 <= age < 900
+            print(f'[cooldown] age={age:.0f}s skip={skip}')
+          except Exception as e:
+            print('[cooldown] unable to evaluate:',e)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+            f.write('skip='+('true' if skip else 'false')+'\n')
+          PY
+
+      - name: Cooldown active - reuse current data
+        if: steps.cooldown.outputs.skip == 'true'
+        run: echo "Dashboard was updated within 15 minutes; no duplicate calculation is needed."
 
       - name: 20% Setup Python
+        if: steps.cooldown.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
       - name: 60% Generate latest date-specific TWSE data
+        if: steps.cooldown.outputs.skip != 'true'
         run: python scripts/update_data_strict.py
 
       - name: 80% Strict same-trading-day validation
+        if: steps.cooldown.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json, urllib.request, sys
@@ -76,6 +110,7 @@ jobs:
           PY
 
       - name: 85% Finalize ranking
+        if: steps.cooldown.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json
@@ -89,6 +124,7 @@ jobs:
           PY
 
       - name: 95% Publish dashboard data
+        if: steps.cooldown.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -101,4 +137,4 @@ jobs:
           fi
 
       - name: 100% Update workflow finished
-        run: echo "Open Sesame update completed with strict same-day TWSE validation."
+        run: echo "Open Sesame update request completed."
