@@ -28,10 +28,10 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: 30% Verify latest TWSE trading-day data
+      - name: 30% Read latest available TWSE source dates
         run: |
           python - <<'PY'
-          import json, time, urllib.request
+          import json, urllib.request
           from datetime import datetime, timezone, timedelta
 
           TZ = timezone(timedelta(hours=8))
@@ -43,57 +43,87 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as r:
                   return json.loads(r.read().decode("utf-8"))
 
-          def roc_to_iso(d):
-              d = str(d).replace("/", "")
-              return f"{int(d[:3]) + 1911:04d}-{d[3:5]}-{d[5:7]}"
+          def roc_to_iso(v):
+              s = str(v or "").replace("/", "").replace(".", "")
+              if len(s) >= 7 and s[:3].isdigit():
+                  return f"{int(s[:3])+1911:04d}-{s[3:5]}-{s[5:7]}"
+              return None
 
           now = datetime.now(TZ)
-          month = now.strftime("%Y%m")
-          last_market_date = None
+          stock_date = None
+          market_date = None
+          try:
+              rows = get(stock_url)
+              dates = [roc_to_iso(r.get("Date")) for r in rows if r.get("Date")]
+              dates = [x for x in dates if x]
+              stock_date = max(dates) if dates else None
+          except Exception as e:
+              print(f"[warn] STOCK_DAY_ALL date unavailable: {e}")
 
-          for attempt in range(10):
-              try:
-                  resp = get(market_url.format(date=month + "01"))
-                  dates = [roc_to_iso(r[0]) for r in resp.get("data", []) if r and len(r) >= 6]
-                  if dates:
-                      last_market_date = max(dates)
-              except Exception as e:
-                  print(f"[warn] market-date check failed: {e}")
+          try:
+              resp = get(market_url.format(date=now.strftime("%Y%m") + "01"))
+              dates = [roc_to_iso(r[0]) for r in resp.get("data", []) if r]
+              dates = [x for x in dates if x]
+              market_date = max(dates) if dates else None
+          except Exception as e:
+              print(f"[warn] FMTQIK date unavailable: {e}")
 
-              try:
-                  rows = get(stock_url)
-                  stock_dates = {roc_to_iso(r.get("Date", "")) for r in rows if r.get("Date")}
-                  stock_date = max(stock_dates) if stock_dates else None
-              except Exception as e:
-                  stock_date = None
-                  print(f"[warn] STOCK_DAY_ALL check failed: {e}")
-
-              print(f"[check] TWSE stock_date={stock_date}, latest_market_date={last_market_date}")
-              if stock_date and last_market_date and stock_date == last_market_date:
-                  print(f"[ok] TWSE data is current for {stock_date}")
-                  break
-              if attempt == 9:
-                  raise SystemExit("TWSE daily snapshot is not current; refusing to publish stale rankings.")
-              print("[wait] TWSE snapshot not current yet; retrying in 60 seconds...")
-              time.sleep(60)
+          print(f"[info] Latest currently available TWSE data: STOCK_DAY_ALL={stock_date}, FMTQIK={market_date}")
+          print("[info] Different TWSE datasets may publish at different times; workflow will use each source's latest available data.")
           PY
 
       - name: 60% Download market data and calculate technical analysis
         run: python scripts/update_data.py
 
-      - name: 85% Finalize ranking data
+      - name: 85% Finalize ranking and source dates
         run: |
           python - <<'PY'
-          import json
+          import json, urllib.request
+
           p = "data/dashboard.json"
           with open(p, encoding="utf-8") as f:
               d = json.load(f)
+
           stocks = d.get("stocks", [])
           stocks.sort(key=lambda x: (bool(x.get("priority")), x.get("cond_count", 0), x.get("change_pct", 0), x.get("volume", 0)), reverse=True)
           d["stocks"] = stocks
+
+          def roc_to_iso(v):
+              s = str(v or "").replace("/", "").replace(".", "")
+              if len(s) >= 7 and s[:3].isdigit():
+                  return f"{int(s[:3])+1911:04d}-{s[3:5]}-{s[5:7]}"
+              return None
+
+          stock_date = None
+          try:
+              req = urllib.request.Request(
+                  "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+                  headers={"User-Agent": "Mozilla/5.0"})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  rows = json.loads(r.read().decode("utf-8"))
+              dates = [roc_to_iso(x.get("Date")) for x in rows if x.get("Date")]
+              dates = [x for x in dates if x]
+              stock_date = max(dates) if dates else None
+          except Exception as e:
+              print(f"[warn] cannot annotate STOCK_DAY_ALL date: {e}")
+
+          market = d.get("market", {})
+          quote = market.get("quote") or {}
+          margin = market.get("margin") or {}
+          margin_hist = margin.get("history") or []
+          d["source_dates"] = {
+              "stock_quote": stock_date,
+              "market_index": quote.get("date"),
+              "institutional": d.get("trust_date"),
+              "margin": margin_hist[-1].get("date") if margin_hist else None,
+              "generated_at": d.get("updated_at"),
+              "note": "各 TWSE 資料集發布時間不同，本頁使用各來源目前可取得的最新資料。"
+          }
+
           with open(p, "w", encoding="utf-8") as f:
               json.dump(d, f, ensure_ascii=False, indent=2)
           print(f"[rank] finalized {len(stocks)} stocks")
+          print(f"[dates] {d['source_dates']}")
           PY
 
       - name: 95% Publish dashboard data
