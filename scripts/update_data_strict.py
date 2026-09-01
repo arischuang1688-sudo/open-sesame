@@ -3,7 +3,7 @@
 Uses TWSE MI_INDEX for date-specific all-stock quotes so stock prices are aligned
 with the latest market trading day, then reuses the existing analytics pipeline.
 """
-import scripts.update_data as u
+import update_data as u
 
 MI_INDEX_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={date}&type=ALLBUT0999&response=json"
 
@@ -87,13 +87,11 @@ def fetch_base_stocks_strict():
         except Exception:
             continue
 
-    # Prefer actively traded stocks; fall back to volume when amount is unavailable.
     stocks.sort(key=lambda s: ((s.get("amount") or 0), s["volume"]), reverse=True)
     print(f"[info] MI_INDEX strict quote date={trading_date} rows={len(stocks)}")
     return stocks[:u.TOP_N]
 
 
-# Replace only the base quote source; keep the existing analysis pipeline.
 u.fetch_base_stocks = fetch_base_stocks_strict
 
 if __name__ == "__main__":
