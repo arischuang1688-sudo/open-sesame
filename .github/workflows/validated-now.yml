@@ -1,0 +1,60 @@
+name: Validated Taiwan Stock Update Now
+on:
+  push:
+    paths:
+      - '.github/force-update'
+permissions:
+  contents: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Generate latest TWSE data
+        run: python scripts/update_data.py
+      - name: Strict validate latest trading day
+        run: |
+          python - <<'PY'
+          import json, urllib.request, sys
+          p='data/dashboard.json'
+          d=json.load(open(p,encoding='utf-8'))
+          def get(u):
+            r=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0'})
+            return json.loads(urllib.request.urlopen(r,timeout=30).read().decode())
+          def iso(v):
+            s=str(v or '').replace('/','').replace('.','')
+            return f'{int(s[:3])+1911:04d}-{s[3:5]}-{s[5:7]}' if len(s)>=7 and s[:3].isdigit() else None
+          market=d.get('market') or {}; quote=market.get('quote') or {}; base=quote.get('date')
+          trust=d.get('trust_date'); mh=((market.get('margin') or {}).get('history') or []); margin=mh[-1].get('date') if mh else None
+          rows=get('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL')
+          sd=[iso(x.get('Date')) for x in rows if x.get('Date')]; sd=[x for x in sd if x]; stock=max(sd) if sd else None
+          dates={'stock_quote':stock,'market_index':base,'institutional':trust,'margin':margin}
+          print('[validate]',dates)
+          if not base or any(not v for v in dates.values()) or any(v!=base for v in dates.values()): sys.exit('VALIDATION FAILED: core sources are not the same latest trading day')
+          by={str(x.get('Code','')).strip():x for x in rows}
+          def num(v):
+            try:return float(str(v).replace(',','').replace('+',''))
+            except:return None
+          errors=[]; checked=0
+          for s in (d.get('stocks') or [])[:30]:
+            code=str(s.get('code','')).strip(); src=by.get(code)
+            if not src: errors.append(code+':missing'); continue
+            a=num(src.get('ClosingPrice')); b=num(s.get('close')); av=num(src.get('TradeVolume')); bv=num(s.get('volume'))
+            if a is None or b is None or abs(a-b)>0.0001: errors.append(code+':close')
+            if av is not None and bv is not None and abs(av/1000-bv)>0.02: errors.append(code+':volume')
+            checked+=1
+          if errors: sys.exit('VALIDATION FAILED: '+','.join(errors[:20]))
+          d['validation']={'status':'passed','trading_date':base,'same_day_sources':True,'stock_quotes_checked':checked}
+          d['source_dates']={**dates,'generated_at':d.get('updated_at'),'note':f'嚴格同交易日驗證已通過：所有核心 TWSE 資料均為 {base}。'}
+          json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)
+          print('[validate] PASSED',base,checked)
+          PY
+      - name: Publish validated data
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/dashboard.json
+          if git diff --cached --quiet; then echo 'No data changes'; else git commit -m 'Daily Taiwan stock update (validated now)'; git push; fi
