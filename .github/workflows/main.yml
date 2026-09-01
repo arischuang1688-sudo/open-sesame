@@ -22,6 +22,59 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Verify latest TWSE trading-day data
+        run: |
+          python - <<'PY'
+          import json, time, urllib.request
+          from datetime import datetime, timezone, timedelta
+
+          TZ = timezone(timedelta(hours=8))
+          stock_url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+          market_url = "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date={date}&response=json"
+
+          def get(url):
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read().decode("utf-8"))
+
+          def roc_to_iso(d):
+              d = str(d).replace("/", "")
+              return f"{int(d[:3]) + 1911:04d}-{d[3:5]}-{d[5:7]}"
+
+          now = datetime.now(TZ)
+          month = now.strftime("%Y%m")
+          last_market_date = None
+
+          # FMTQIK is used only to establish the latest official trading date.
+          for attempt in range(10):
+              try:
+                  resp = get(market_url.format(date=month + "01"))
+                  dates = [roc_to_iso(r[0]) for r in resp.get("data", []) if r and len(r) >= 6]
+                  if dates:
+                      last_market_date = max(dates)
+              except Exception as e:
+                  print(f"[warn] market-date check failed: {e}")
+
+              try:
+                  rows = get(stock_url)
+                  stock_dates = {roc_to_iso(r.get("Date", "")) for r in rows if r.get("Date")}
+                  stock_date = max(stock_dates) if stock_dates else None
+              except Exception as e:
+                  stock_date = None
+                  print(f"[warn] STOCK_DAY_ALL check failed: {e}")
+
+              print(f"[check] TWSE stock_date={stock_date}, latest_market_date={last_market_date}")
+
+              if stock_date and last_market_date and stock_date == last_market_date:
+                  print(f"[ok] TWSE data is current for {stock_date}")
+                  break
+
+              if attempt == 9:
+                  raise SystemExit("TWSE daily snapshot is not current; refusing to publish stale rankings.")
+
+              print("[wait] TWSE snapshot not current yet; retrying in 60 seconds...")
+              time.sleep(60)
+
       - name: Update Taiwan stock data
         run: python scripts/update_data.py
 
