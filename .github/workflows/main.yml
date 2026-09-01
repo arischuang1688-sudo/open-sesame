@@ -1,7 +1,13 @@
 name: Daily Taiwan Stock Update
+run-name: "Open Sesame Update ${{ inputs.request_id || 'scheduled' }}"
 
 on:
   workflow_dispatch:
+    inputs:
+      request_id:
+        description: "Web request ID used for live progress tracking"
+        required: false
+        type: string
   schedule:
     - cron: "5 21 * * *"
       timezone: "Asia/Taipei"
@@ -14,15 +20,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: 10% Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: 20% Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
-      - name: Verify latest TWSE trading-day data
+      - name: 30% Verify latest TWSE trading-day data
         run: |
           python - <<'PY'
           import json, time, urllib.request
@@ -45,7 +51,6 @@ jobs:
           month = now.strftime("%Y%m")
           last_market_date = None
 
-          # FMTQIK is used only to establish the latest official trading date.
           for attempt in range(10):
               try:
                   resp = get(market_url.format(date=month + "01"))
@@ -64,30 +69,44 @@ jobs:
                   print(f"[warn] STOCK_DAY_ALL check failed: {e}")
 
               print(f"[check] TWSE stock_date={stock_date}, latest_market_date={last_market_date}")
-
               if stock_date and last_market_date and stock_date == last_market_date:
                   print(f"[ok] TWSE data is current for {stock_date}")
                   break
-
               if attempt == 9:
                   raise SystemExit("TWSE daily snapshot is not current; refusing to publish stale rankings.")
-
               print("[wait] TWSE snapshot not current yet; retrying in 60 seconds...")
               time.sleep(60)
+          PY
 
-      - name: Update Taiwan stock data
+      - name: 60% Download market data and calculate technical analysis
         run: python scripts/update_data.py
 
-      - name: Commit updated data
+      - name: 85% Finalize ranking data
+        run: |
+          python - <<'PY'
+          import json
+          p = "data/dashboard.json"
+          with open(p, encoding="utf-8") as f:
+              d = json.load(f)
+          stocks = d.get("stocks", [])
+          stocks.sort(key=lambda x: (bool(x.get("priority")), x.get("cond_count", 0), x.get("change_pct", 0), x.get("volume", 0)), reverse=True)
+          d["stocks"] = stocks
+          with open(p, "w", encoding="utf-8") as f:
+              json.dump(d, f, ensure_ascii=False, indent=2)
+          print(f"[rank] finalized {len(stocks)} stocks")
+          PY
+
+      - name: 95% Publish dashboard data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add data/dashboard.json
-
           if git diff --cached --quiet; then
             echo "No data changes."
           else
             git commit -m "Daily Taiwan stock update"
             git push
           fi
+
+      - name: 100% Update workflow finished
+        run: echo "Open Sesame update workflow completed successfully."
