@@ -11,20 +11,25 @@ function cors(res){
 }
 
 function stageFromSteps(steps=[]){
-  const map=[
+  const exact=[
     ['100% Update workflow finished',100,'GitHub Actions 完成'],
     ['95% Publish dashboard data',95,'發布 Dashboard 資料'],
-    ['85% Finalize ranking data',85,'完成個股排名'],
-    ['60% Download market data and calculate technical analysis',60,'下載資料與技術分析'],
-    ['30% Verify latest TWSE trading-day data',30,'確認 TWSE 最新交易日'],
+    ['85% Finalize ranking',85,'完成個股排名'],
+    ['80% Strict same-trading-day validation',80,'嚴格同交易日驗證'],
+    ['60% Generate latest date-specific TWSE data',60,'取得 TWSE 最新資料'],
     ['20% Setup Python',20,'準備分析環境'],
+    ['15% Cooldown guard',15,'檢查更新冷卻時間'],
     ['10% Checkout source',10,'載入程式碼']
   ];
-  for(const [name,pct,label] of map){
+  for(const [name,pct,label] of exact){
     const s=steps.find(x=>x.name===name);
     if(s?.status==='in_progress') return {percent:pct,label};
-    if(s?.status==='completed' && s?.conclusion==='success') return {percent:Math.min(99,pct),label:pct===100?'GitHub Pages 發布中':label};
-    if(s?.status==='completed' && s?.conclusion && s.conclusion!=='success') return {percent:pct,label:`${label}失敗`,failed:true};
+    if(s?.status==='completed' && s?.conclusion==='failure'){
+      if(name==='80% Strict same-trading-day validation'){
+        return {percent:80,label:'核心資料日期尚未完全同步',failed:true,validation_pending:true};
+      }
+      return {percent:pct,label:`${label}失敗`,failed:true};
+    }
   }
   return {percent:5,label:'等待 GitHub Actions 啟動'};
 }
@@ -56,7 +61,15 @@ export default async function handler(req,res){
     const job=(jobs.jobs||[]).find(x=>x.name==='update') || (jobs.jobs||[])[0];
     const stage=stageFromSteps(job?.steps||[]);
     if(run.status==='completed' && run.conclusion!=='success'){
-      return res.status(200).json({found:true,done:true,failed:true,percent:stage.percent,label:`GitHub Actions ${run.conclusion}`,run_url:run.html_url});
+      if(stage.validation_pending){
+        return res.status(200).json({
+          found:true,done:true,failed:true,validation_pending:true,percent:80,
+          label:'TWSE 核心資料日期尚未完全同步',
+          message:'今日個股、大盤與投信資料已取得，但至少一項核心資料（常見為融資）尚未更新到同一交易日。本次不發布混合日期資料，網站繼續保留上一份已通過驗證的完整資料。',
+          run_url:run.html_url
+        });
+      }
+      return res.status(200).json({found:true,done:true,failed:true,percent:stage.percent,label:stage.label||`GitHub Actions ${run.conclusion}`,run_url:run.html_url});
     }
     if(run.status==='completed' && run.conclusion==='success'){
       try{
@@ -72,7 +85,7 @@ export default async function handler(req,res){
       }catch{}
       return res.status(200).json({found:true,done:false,failed:false,percent:99,label:'GitHub Pages 發布中',run_url:run.html_url});
     }
-    return res.status(200).json({found:true,done:false,failed:!!stage.failed,percent:stage.percent,label:stage.label,run_url:run.html_url});
+    return res.status(200).json({found:true,done:false,failed:false,percent:stage.percent,label:stage.label,run_url:run.html_url});
   }catch(e){
     return res.status(500).json({error:e.message||'Status lookup failed'});
   }
