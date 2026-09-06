@@ -9,7 +9,7 @@ on:
         required: false
         type: string
   schedule:
-    - cron: "5 21 * * *"
+    - cron: "5 21 * * 1-5"
       timezone: "Asia/Taipei"
 
 permissions:
@@ -63,8 +63,32 @@ jobs:
         if: steps.cooldown.outputs.skip != 'true'
         run: python scripts/update_data_strict.py
 
-      - name: 80% Strict same-trading-day validation
+      - name: 65% New trading day guard
+        id: freshness
         if: steps.cooldown.outputs.skip != 'true'
+        run: |
+          python - <<'PY'
+          import json, os
+          old=json.loads(os.popen("git show HEAD:data/dashboard.json").read())
+          new=json.load(open('data/dashboard.json',encoding='utf-8'))
+          def trading_date(d):
+            return str((((d.get('market') or {}).get('quote') or {}).get('date') or '')).strip()
+          old_date=trading_date(old)
+          new_date=trading_date(new)
+          if not new_date:
+            raise SystemExit('FRESHNESS FAILED: generated trading date is missing')
+          skip=bool(old_date and new_date <= old_date)
+          print(f'[freshness] stored={old_date} generated={new_date} skip={skip}')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+            f.write('skip='+('true' if skip else 'false')+'\\n')
+          PY
+
+      - name: No newer trading day - keep current data
+        if: steps.freshness.outputs.skip == 'true'
+        run: echo "Generated trading date is not newer than the stored date; no validation or commit is needed."
+
+      - name: 80% Strict same-trading-day validation
+        if: steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json, urllib.request, sys
@@ -110,7 +134,7 @@ jobs:
           PY
 
       - name: 85% Finalize ranking
-        if: steps.cooldown.outputs.skip != 'true'
+        if: steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json
@@ -124,7 +148,7 @@ jobs:
           PY
 
       - name: 95% Publish dashboard data
-        if: steps.cooldown.outputs.skip != 'true'
+        if: steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
