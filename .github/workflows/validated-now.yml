@@ -15,7 +15,29 @@ jobs:
           python-version: '3.x'
       - name: Generate latest TWSE data
         run: python scripts/update_data_strict.py
+      - name: Check for a newer trading day
+        id: freshness
+        run: |
+          python - <<'PY'
+          import json, os
+          old=json.loads(os.popen("git show HEAD:data/dashboard.json").read())
+          new=json.load(open('data/dashboard.json',encoding='utf-8'))
+          def trading_date(d):
+            return str((((d.get('market') or {}).get('quote') or {}).get('date') or '')).strip()
+          old_date=trading_date(old)
+          new_date=trading_date(new)
+          if not new_date:
+            raise SystemExit('FRESHNESS FAILED: generated trading date is missing')
+          skip=bool(old_date and new_date <= old_date)
+          print(f'[freshness] stored={old_date} generated={new_date} skip={skip}')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+            f.write('skip='+('true' if skip else 'false')+'\\n')
+          PY
+      - name: No newer trading day
+        if: steps.freshness.outputs.skip == 'true'
+        run: echo 'Generated trading date is not newer; keeping current dashboard data.'
       - name: Strict validate latest trading day
+        if: steps.freshness.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json, urllib.request, sys
@@ -60,6 +82,7 @@ jobs:
           print('[validate] PASSED',base,checked)
           PY
       - name: Publish validated data
+        if: steps.freshness.outputs.skip != 'true'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
