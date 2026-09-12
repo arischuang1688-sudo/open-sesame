@@ -22,6 +22,17 @@ def _field_index(fields, *names):
     return None
 
 
+def _signed_change(sign_value, change_value):
+    """Combine TWSE's separate direction and price-change fields."""
+    magnitude = abs(u.to_float(change_value) or 0)
+    sign = str(sign_value or "")
+    if "-" in sign:
+        return -magnitude
+    if "+" in sign:
+        return magnitude
+    return 0
+
+
 def fetch_base_stocks_strict():
     trading_date = _latest_market_date()
     if not trading_date:
@@ -51,9 +62,10 @@ def fetch_base_stocks_strict():
     i_open = _field_index(fields, "開盤價")
     i_vol = _field_index(fields, "成交股數")
     i_amt = _field_index(fields, "成交金額")
+    i_sign = _field_index(fields, "漲跌(+/-)")
     i_chg = _field_index(fields, "漲跌價差", "漲跌點數")
 
-    required = [i_code, i_name, i_close, i_vol]
+    required = [i_code, i_name, i_close, i_vol, i_sign, i_chg]
     if any(i is None for i in required):
         print(f"[error] MI_INDEX fields incomplete: {fields}")
         return None
@@ -67,8 +79,7 @@ def fetch_base_stocks_strict():
             open_ = u.to_float(row[i_open]) if i_open is not None else None
             volume_shares = u.to_float(row[i_vol]) or 0
             amount = u.to_float(row[i_amt]) if i_amt is not None else None
-            change = u.to_float(row[i_chg]) if i_chg is not None else 0
-            change = change or 0
+            change = _signed_change(row[i_sign], row[i_chg])
             if not code or not name or close <= 0:
                 continue
             prev = close - change

@@ -49,6 +49,10 @@ jobs:
           def num(v):
             try:return float(str(v).replace(',','').replace('+',''))
             except:return None
+          def signed_change(sign, value):
+            magnitude=abs(num(value) or 0)
+            sign=str(sign or '')
+            return -magnitude if '-' in sign else magnitude if '+' in sign else 0
           market=d.get('market') or {}; quote=market.get('quote') or {}; base=quote.get('date')
           trust=d.get('trust_date'); mh=((market.get('margin') or {}).get('history') or []); margin=mh[-1].get('date') if mh else None
           if not base: sys.exit('VALIDATION FAILED: market date missing')
@@ -61,7 +65,7 @@ jobs:
               table=t; break
           if not table: sys.exit('VALIDATION FAILED: MI_INDEX stock table missing')
           fields=table.get('fields',[]); rows=table.get('data',[])
-          ic=fields.index('證券代號'); iclose=fields.index('收盤價'); ivol=fields.index('成交股數')
+          ic=fields.index('證券代號'); iclose=fields.index('收盤價'); ivol=fields.index('成交股數'); isign=fields.index('漲跌(+/-)'); ichg=fields.index('漲跌價差')
           by={str(r[ic]).strip():r for r in rows}
           dates={'stock_quote':base,'market_index':base,'institutional':trust,'margin':margin}
           print('[validate]',dates)
@@ -70,9 +74,10 @@ jobs:
           for s in (d.get('stocks') or [])[:50]:
             code=str(s.get('code','')).strip(); src=by.get(code)
             if not src: errors.append(code+':missing'); continue
-            a=num(src[iclose]); b=num(s.get('close')); av=num(src[ivol]); bv=num(s.get('volume'))
+            a=num(src[iclose]); b=num(s.get('close')); av=num(src[ivol]); bv=num(s.get('volume')); ac=signed_change(src[isign],src[ichg]); bc=num(s.get('change'))
             if a is None or b is None or abs(a-b)>0.0001: errors.append(code+':close')
             if av is not None and bv is not None and abs(av/1000-bv)>0.02: errors.append(code+':volume')
+            if bc is None or abs(ac-bc)>0.0001: errors.append(code+':change-direction')
             checked+=1
           if errors: sys.exit('VALIDATION FAILED: '+','.join(errors[:20]))
           if checked < 30: sys.exit(f'VALIDATION FAILED: only {checked} stock quotes checked')
