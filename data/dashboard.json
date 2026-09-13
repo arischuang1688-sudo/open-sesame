@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-09-11T21:41:45.489605+08:00",
+  "updated_at": "2026-09-13T09:07:34.092357+08:00",
   "trust_date": "2026-09-11",
   "market": {
     "source": "TWSE",
@@ -9,16 +9,6 @@
       "change": -40.3,
       "trend": "減",
       "history": [
-        {
-          "date": "2026-08-31",
-          "balance": 5698.8,
-          "prev_balance": 5671.8
-        },
-        {
-          "date": "2026-09-01",
-          "balance": 5781.2,
-          "prev_balance": 5698.8
-        },
         {
           "date": "2026-09-02",
           "balance": 5856.8,
@@ -5800,15 +5790,14 @@
     "trading_date": "2026-09-11",
     "same_day_sources": true,
     "stock_quotes_checked": 50,
-    "stock_quote_source": "TWSE MI_INDEX",
-    "stock_direction_checked": 200
+    "stock_quote_source": "TWSE MI_INDEX"
   },
   "source_dates": {
     "stock_quote": "2026-09-11",
     "market_index": "2026-09-11",
     "institutional": "2026-09-11",
     "margin": "2026-09-11",
-    "generated_at": "2026-09-11T21:41:45.489605+08:00",
-    "note": "嚴格同交易日驗證已通過：核心 TWSE 資料、個股收盤與漲跌方向均為 2026-09-11。"
+    "generated_at": "2026-09-13T09:07:34.092357+08:00",
+    "note": "嚴格同交易日驗證已通過：核心 TWSE 資料與個股 MI_INDEX 行情均為 2026-09-11。"
   }
 }
