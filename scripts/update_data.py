@@ -141,15 +141,20 @@ def parse_mi_margn(resp):
         data = t.get("data", [])
         if not data:
             continue
-        if "股票代號" in fields:
+        # MI_MARGN 的個股表目前使用「代號／名稱」，不是「股票代號」。
+        # 同一張表後半部另有一組融券的前日/今日餘額；融資是第一組，
+        # 所以明確取代號後的第一組索引，避免誤讀成融券資料。
+        code_field = "股票代號" if "股票代號" in fields else "證券代號" if "證券代號" in fields else "代號" if "代號" in fields else None
+        if code_field:
             try:
-                i_prev = fields.index("前日餘額")
-                i_today = fields.index("今日餘額")
+                i_code = fields.index(code_field)
+                i_prev = fields.index("前日餘額", i_code + 1)
+                i_today = fields.index("今日餘額", i_prev + 1)
             except ValueError:
                 continue
             per_stock = {}
             for row in data:
-                code = str(row[0]).strip()
+                code = str(row[i_code]).strip()
                 prev = to_float(row[i_prev])
                 cur = to_float(row[i_today])
                 if code and prev is not None and cur is not None:
@@ -379,6 +384,8 @@ def main():
         if margin_stocks and s["code"] in margin_stocks:
             ms = margin_stocks[s["code"]]
             s["margin_balance"] = ms["today"]
+            s["margin_prev_balance"] = ms["prev"]
+            s["margin_change"] = ms["today"] - ms["prev"]
             if ms["prev"] > 0:
                 pct = (ms["today"] - ms["prev"]) / ms["prev"] * 100
                 s["margin_change_pct"] = round(pct, 1)
