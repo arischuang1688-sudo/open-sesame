@@ -77,8 +77,18 @@ jobs:
           new_date=trading_date(new)
           if not new_date:
             raise SystemExit('FRESHNESS FAILED: generated trading date is missing')
-          skip=bool(old_date and new_date <= old_date)
-          print(f'[freshness] stored={old_date} generated={new_date} skip={skip}')
+          def complete_margin_count(d):
+            return sum(
+              1 for s in (d.get('stocks') or [])
+              if s.get('margin') not in (None, '', '資料待補', '待計算')
+            )
+          old_margin=complete_margin_count(old)
+          new_margin=complete_margin_count(new)
+          same_or_older=bool(old_date and new_date <= old_date)
+          # 同一交易日通常不重寫；但允許把原本缺漏的個股融資資料補齊。
+          margin_backfill=new_date == old_date and new_margin > old_margin
+          skip=same_or_older and not margin_backfill
+          print(f'[freshness] stored={old_date} generated={new_date} old_margin={old_margin} new_margin={new_margin} margin_backfill={margin_backfill} skip={skip}')
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
             f.write('skip='+('true' if skip else 'false')+'\\n')
           PY
