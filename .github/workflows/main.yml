@@ -100,20 +100,25 @@ jobs:
       - name: 80% Strict same-trading-day validation
         if: steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip != 'true'
         run: |
+          python -m unittest discover -s tests -p 'test_quote_validation.py'
           python - <<'PY'
-          import json, urllib.request, sys
+          import json, urllib.request, sys, math, re
           p='data/dashboard.json'
           d=json.load(open(p,encoding='utf-8'))
           def get(u):
             r=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0'})
             return json.loads(urllib.request.urlopen(r,timeout=45).read().decode())
           def num(v):
-            try:return float(str(v).replace(',','').replace('+',''))
+            try:
+              n=float(str(v).replace(',','').replace('+',''))
+              return n if math.isfinite(n) else None
             except:return None
           def signed_change(sign, value):
-            magnitude=abs(num(value) or 0)
-            sign=str(sign or '')
-            return -magnitude if '-' in sign else magnitude if '+' in sign else 0
+            magnitude=num(value)
+            if magnitude is None or sign is None: return None
+            magnitude=abs(magnitude)
+            sign=re.sub(r'<[^>]*>', '', str(sign)).strip()
+            return -magnitude if sign == '-' else magnitude if sign == '+' else 0 if sign == '' and magnitude == 0 else None
           market=d.get('market') or {}; quote=market.get('quote') or {}; base=quote.get('date')
           trust=d.get('trust_date'); mh=((market.get('margin') or {}).get('history') or []); margin=mh[-1].get('date') if mh else None
           if not base: sys.exit('VALIDATION FAILED: market date missing')
@@ -131,17 +136,22 @@ jobs:
           dates={'stock_quote':base,'market_index':base,'institutional':trust,'margin':margin}
           print('[validate]',dates)
           if any(not v for v in dates.values()) or any(v!=base for v in dates.values()): sys.exit('VALIDATION FAILED: core sources are not the same latest trading day')
-          errors=[]; checked=0
-          for s in (d.get('stocks') or [])[:50]:
+          stocks=d.get('stocks') or []
+          if len(stocks) != 200: sys.exit(f'VALIDATION FAILED: expected 200 stock quotes, got {len(stocks)}')
+          errors=[]; checked=0; seen=set()
+          for s in stocks:
             code=str(s.get('code','')).strip(); src=by.get(code)
+            if not code or code in seen: errors.append(code+':missing-or-duplicate-code'); continue
+            seen.add(code)
             if not src: errors.append(code+':missing'); continue
+            if len(src) <= max(iclose, ivol, isign, ichg): errors.append(code+':incomplete'); continue
             a=num(src[iclose]); b=num(s.get('close')); av=num(src[ivol]); bv=num(s.get('volume')); ac=signed_change(src[isign],src[ichg]); bc=num(s.get('change'))
             if a is None or b is None or abs(a-b)>0.0001: errors.append(code+':close')
-            if av is not None and bv is not None and abs(av/1000-bv)>0.02: errors.append(code+':volume')
-            if bc is None or abs(ac-bc)>0.0001: errors.append(code+':change-direction')
+            if av is None or bv is None or abs(round(av/1000,2)-bv)>0.0001: errors.append(code+':volume')
+            if ac is None or bc is None or abs(ac-bc)>0.0001: errors.append(code+':change-direction')
             checked+=1
           if errors: sys.exit('VALIDATION FAILED: '+','.join(errors[:20]))
-          if checked < 30: sys.exit(f'VALIDATION FAILED: only {checked} stock quotes checked')
+          if checked != len(stocks): sys.exit(f'VALIDATION FAILED: only {checked}/{len(stocks)} stock quotes checked')
           d['validation']={'status':'passed','trading_date':base,'same_day_sources':True,'stock_quotes_checked':checked,'stock_quote_source':'TWSE MI_INDEX'}
           d['source_dates']={**dates,'generated_at':d.get('updated_at'),'note':f'嚴格同交易日驗證已通過：核心 TWSE 資料與個股 MI_INDEX 行情均為 {base}。'}
           json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)
