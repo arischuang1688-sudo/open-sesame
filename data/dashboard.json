@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-02T02:51:07.552503+08:00",
+  "updated_at": "2026-10-02T06:58:26.729303+08:00",
   "trust_date": "2026-10-01",
   "market": {
     "source": "TWSE",
@@ -6781,7 +6781,7 @@
     "status": "passed",
     "trading_date": "2026-10-01",
     "same_day_sources": true,
-    "stock_quotes_checked": 50,
+    "stock_quotes_checked": 200,
     "stock_quote_source": "TWSE MI_INDEX"
   },
   "source_dates": {
@@ -6789,7 +6789,7 @@
     "market_index": "2026-10-01",
     "institutional": "2026-10-01",
     "margin": "2026-10-01",
-    "generated_at": "2026-10-02T02:51:07.552503+08:00",
+    "generated_at": "2026-10-02T06:58:26.729303+08:00",
     "note": "嚴格同交易日驗證已通過：核心 TWSE 資料與個股 MI_INDEX 行情均為 2026-10-01。"
   }
 }
