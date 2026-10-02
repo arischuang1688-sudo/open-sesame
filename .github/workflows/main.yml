@@ -102,7 +102,8 @@ jobs:
         run: |
           python -m unittest discover -s tests -p 'test_quote_validation.py'
           python - <<'PY'
-          import json, urllib.request, sys, math, re
+          import json, urllib.request, sys, math
+          from scripts.twse_quote import signed_change
           p='data/dashboard.json'
           d=json.load(open(p,encoding='utf-8'))
           def get(u):
@@ -113,12 +114,6 @@ jobs:
               n=float(str(v).replace(',','').replace('+',''))
               return n if math.isfinite(n) else None
             except:return None
-          def signed_change(sign, value):
-            magnitude=num(value)
-            if magnitude is None or sign is None: return None
-            magnitude=abs(magnitude)
-            sign=re.sub(r'<[^>]*>', '', str(sign)).strip()
-            return -magnitude if sign == '-' else magnitude if sign == '+' else 0 if sign == '' and magnitude == 0 else None
           market=d.get('market') or {}; quote=market.get('quote') or {}; base=quote.get('date')
           trust=d.get('trust_date'); mh=((market.get('margin') or {}).get('history') or []); margin=mh[-1].get('date') if mh else None
           if not base: sys.exit('VALIDATION FAILED: market date missing')

@@ -4,6 +4,7 @@ Uses TWSE MI_INDEX for date-specific all-stock quotes so stock prices are aligne
 with the latest market trading day, then reuses the existing analytics pipeline.
 """
 import update_data as u
+from twse_quote import signed_change as _signed_change
 
 MI_INDEX_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={date}&type=ALLBUT0999&response=json"
 
@@ -20,17 +21,6 @@ def _field_index(fields, *names):
         if name in fields:
             return fields.index(name)
     return None
-
-
-def _signed_change(sign_value, change_value):
-    """Combine TWSE's separate direction and price-change fields."""
-    magnitude = abs(u.to_float(change_value) or 0)
-    sign = str(sign_value or "")
-    if "-" in sign:
-        return -magnitude
-    if "+" in sign:
-        return magnitude
-    return 0
 
 
 def fetch_base_stocks_strict():
@@ -79,9 +69,13 @@ def fetch_base_stocks_strict():
             open_ = u.to_float(row[i_open]) if i_open is not None else None
             volume_shares = u.to_float(row[i_vol]) or 0
             amount = u.to_float(row[i_amt]) if i_amt is not None else None
-            change = _signed_change(row[i_sign], row[i_chg])
             if not code or not name or close <= 0:
                 continue
+            change = _signed_change(row[i_sign], row[i_chg])
+            if change is None:
+                # SystemExit must not be swallowed by the row-level Exception handler.
+                raise SystemExit(f"MI_INDEX FAILED: {code}:change-direction "
+                                 f"sign={row[i_sign]!r} value={row[i_chg]!r}")
             prev = close - change
             stocks.append({
                 "code": code,

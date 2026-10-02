@@ -3,12 +3,18 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import sys
 import textwrap
 import unittest
 from unittest.mock import Mock, mock_open, patch
 
 
 WORKFLOW = Path(__file__).resolve().parents[1] / '.github/workflows/main.yml'
+sys.path.insert(0, str(WORKFLOW.parents[2] / 'scripts'))
+import update_data_strict as generator
+
+RECORDED = json.loads((Path(__file__).parent / 'fixtures/mi_index_20261002_6834.json')
+                      .read_text(encoding='utf-8'))
 STEP = WORKFLOW.read_text(encoding='utf-8').split(
     '- name: 80% Strict same-trading-day validation', 1)[1]
 VALIDATOR = compile(textwrap.dedent(STEP.split("python - <<'PY'\n", 1)[1]
@@ -33,6 +39,7 @@ def fixture():
 
 class QuoteValidationTest(unittest.TestCase):
     def validate(self, dashboard, response, error=None):
+        date = dashboard['market']['quote']['date']
         file = mock_open(read_data=json.dumps(dashboard))
         output = io.StringIO()
         with patch('builtins.open', file), contextlib.redirect_stdout(output), \
@@ -48,12 +55,12 @@ class QuoteValidationTest(unittest.TestCase):
             request.assert_called_once()
             self.assertEqual(request.call_args.args[0].full_url,
                              'https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX'
-                             '?date=20261001&type=ALLBUT0999&response=json')
+                             f'?date={date.replace("-", "")}&type=ALLBUT0999&response=json')
         if not error:
             saved = json.loads(''.join(c.args[0] for c in file().write.call_args_list))
             self.assertEqual(saved['validation']['stock_quotes_checked'], 200)
             self.assertEqual(saved['stocks'], dashboard['stocks'])
-            self.assertIn('[validate] PASSED 2026-10-01 200', output.getvalue())
+            self.assertIn(f'[validate] PASSED {date} 200', output.getvalue())
 
     def test_all_200_with_up_down_flat_and_rounded_volume(self):
         self.validate(*fixture())
@@ -95,7 +102,7 @@ class QuoteValidationTest(unittest.TestCase):
             self.validate(d, r, '1199:')
 
     def test_missing_or_unknown_direction_is_not_flat(self):
-        for sign, magnitude in [(None, '0'), ('X', '0'), ('?', '0'), ('', '1.5')]:
+        for sign, magnitude in [(None, '0'), ('X', '1.5'), ('?', '0'), ('', '1.5')]:
             with self.subTest(sign=sign, magnitude=magnitude):
                 d, r = fixture()
                 r['tables'][0]['data'][199][4:] = [sign, magnitude]
@@ -121,6 +128,50 @@ class QuoteValidationTest(unittest.TestCase):
                     else:
                         d['market']['margin']['history'][-1]['date'] = date
                     self.validate(d, r, 'core sources are not the same latest trading day')
+
+    def test_recorded_6834_non_comparison_and_real_mismatches(self):
+        with patch.object(generator, '_latest_market_date', return_value='2026-10-02'), \
+                patch.object(generator.u, 'fetch_json', return_value=RECORDED) as request:
+            stocks = generator.fetch_base_stocks_strict()
+        request.assert_called_once_with(RECORDED['source'], timeout=45, retries=3)
+        self.assertEqual(len(stocks), 1)
+        self.assertEqual({k: stocks[0][k] for k in ('code', 'close', 'volume', 'change', 'change_pct')},
+                         dict(code='6834', close=131.0, volume=12078.27, change=0, change_pct=0))
+        for field, wrong in [(None, None), ('close', 130), ('volume', 12078), ('change', 1)]:
+            with self.subTest(field=field):
+                d, r = fixture()
+                d['stocks'][199] = stocks[0].copy()
+                d['trust_date'] = d['market']['quote']['date'] = '2026-10-02'
+                d['market']['margin']['history'][-1]['date'] = '2026-10-02'
+                r['date'] = RECORDED['date']
+                recorded = dict(zip(RECORDED['tables'][0]['fields'], RECORDED['tables'][0]['data'][0]))
+                r['tables'][0]['data'][199] = [recorded[f] for f in FIELDS]
+                if field:
+                    d['stocks'][199][field] = wrong
+                self.validate(d, r, '6834:' + ('change-direction' if field == 'change' else field)
+                              if field else None)
+
+    def test_generator_parser_rejects_unknown_and_invalid_values(self):
+        cases = [(None, '0'), ('?', '0'), ('X', '1'), ('', '1'), ('+-', '1')]
+        cases += [(sign, value) for sign in ('+', '-', '', 'X')
+                  for value in (None, '', '--', 'NaN', 'Infinity', '-Infinity')]
+        for sign, value in cases:
+            with self.subTest(sign=sign, value=value):
+                self.assertIsNone(generator._signed_change(sign, value))
+
+    def test_html_attributes_are_not_direction_symbols(self):
+        for sign, expected in [('+', 1.5), ('-', -1.5)]:
+            markup = f'<p data-label="+/-" style="font-size:12px">{sign}</p>'
+            self.assertEqual(generator._signed_change(markup, '1.50'), expected)
+
+    def test_generator_invalid_direction_aborts_instead_of_dropping_stock(self):
+        for sign, value in [('<p>?</p>', '0.00'), ('<p>X</p>', '1.00')]:
+            response = json.loads(json.dumps(RECORDED))
+            response['tables'][0]['data'][0][9:11] = [sign, value]
+            with patch.object(generator, '_latest_market_date', return_value='2026-10-02'), \
+                    patch.object(generator.u, 'fetch_json', return_value=response):
+                with self.assertRaisesRegex(SystemExit, '6834:change-direction'):
+                    generator.fetch_base_stocks_strict()
 
 
 if __name__ == '__main__':
