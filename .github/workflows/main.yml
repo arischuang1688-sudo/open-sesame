@@ -8,6 +8,11 @@ on:
         description: "Web request ID"
         required: false
         type: string
+      backfill:
+        description: "Allow latest-trading-day/margin backfill on a closed day (all existing guards still apply)"
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "5 21 * * 1-5"
       timezone: "Asia/Taipei"
@@ -27,6 +32,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          # A queued run must evaluate the latest dashboard, not its trigger SHA.
+          ref: ${{ github.ref }}
+
+      - name: 12% Offline TWSE trading day guard
+        id: calendar
+        env:
+          BACKFILL: ${{ inputs.backfill || false }}
+        run: python scripts/trading_day.py
+
+      - name: Market closed - keep current data
+        if: steps.calendar.outputs.skip == 'true'
+        run: echo "TWSE market closed in Asia/Taipei; data generation and publishing skipped."
 
       - name: 15% Cooldown guard
         id: cooldown
@@ -54,18 +71,18 @@ jobs:
         run: echo "Dashboard was updated within 15 minutes; no duplicate calculation is needed."
 
       - name: 20% Setup Python
-        if: steps.cooldown.outputs.skip != 'true'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
       - name: 60% Generate latest date-specific TWSE data
-        if: steps.cooldown.outputs.skip != 'true'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true'
         run: python scripts/update_data_strict.py
 
       - name: 65% New trading day guard
         id: freshness
-        if: steps.cooldown.outputs.skip != 'true'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json, os
@@ -90,7 +107,7 @@ jobs:
           skip=same_or_older and not margin_backfill
           print(f'[freshness] stored={old_date} generated={new_date} old_margin={old_margin} new_margin={new_margin} margin_backfill={margin_backfill} skip={skip}')
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
-            f.write('skip='+('true' if skip else 'false')+'\\n')
+            f.write('skip='+('true' if skip else 'false')+'\n')
           PY
 
       - name: No newer trading day - keep current data
@@ -98,7 +115,7 @@ jobs:
         run: echo "Generated trading date is not newer than the stored date; no validation or commit is needed."
 
       - name: 80% Strict same-trading-day validation
-        if: steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip != 'true'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false'
         run: |
           python -m unittest discover -s tests -p 'test_quote_validation.py'
           python - <<'PY'
@@ -154,7 +171,7 @@ jobs:
           PY
 
       - name: 85% Finalize ranking
-        if: steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip != 'true'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false'
         run: |
           python - <<'PY'
           import json
@@ -168,7 +185,7 @@ jobs:
           PY
 
       - name: 95% Publish dashboard data
-        if: steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip != 'true'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
