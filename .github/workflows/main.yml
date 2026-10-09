@@ -14,11 +14,15 @@ on:
         default: false
         type: boolean
   schedule:
-    - cron: "5 21 * * 1-5"
-      timezone: "Asia/Taipei"
+    # UTC 13:05 = Asia/Taipei 21:05. Do not add a timezone to UTC cron.
+    - cron: "5 13 * * 1-5"
+    # Recovery checks at Taipei 21:35, 22:05 and 22:35; complete data is reused.
+    - cron: "35 13 * * 1-5"
+    - cron: "5,35 14 * * 1-5"
 
 permissions:
   contents: write
+  pages: write
 
 concurrency:
   group: open-sesame-data-update
@@ -27,6 +31,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: 10% Checkout source
         uses: actions/checkout@v4
@@ -70,19 +75,32 @@ jobs:
         if: steps.cooldown.outputs.skip == 'true'
         run: echo "Dashboard was updated within 15 minutes; no duplicate calculation is needed."
 
-      - name: 20% Setup Python
+      - name: 18% Scheduled snapshot guard
+        id: scheduled
         if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true'
+        env:
+          EXPECTED_TRADING_DATE: ${{ steps.calendar.outputs.taipei_date }}
+        run: python scripts/scheduled_update.py
+
+      - name: Scheduled snapshot already complete
+        if: steps.scheduled.outputs.skip == 'true'
+        run: echo "Today's 200-stock validated snapshot is complete; no TWSE requests or data commit needed."
+
+      - name: 20% Setup Python
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.scheduled.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
       - name: 60% Generate latest date-specific TWSE data
-        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.scheduled.outputs.skip != 'true'
         run: python scripts/update_data_strict.py
 
       - name: 65% New trading day guard
         id: freshness
-        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.scheduled.outputs.skip != 'true'
+        env:
+          EXPECTED_TRADING_DATE: ${{ steps.calendar.outputs.taipei_date }}
         run: |
           python - <<'PY'
           import json, os
@@ -92,6 +110,8 @@ jobs:
             return str((((d.get('market') or {}).get('quote') or {}).get('date') or '')).strip()
           old_date=trading_date(old)
           new_date=trading_date(new)
+          from scripts.scheduled_update import require_scheduled_date
+          require_scheduled_date(new_date, os.environ.get('EXPECTED_TRADING_DATE', ''), os.environ.get('GITHUB_EVENT_NAME', ''))
           if not new_date:
             raise SystemExit('FRESHNESS FAILED: generated trading date is missing')
           def complete_margin_count(d):
@@ -115,7 +135,7 @@ jobs:
         run: echo "Generated trading date is not newer than the stored date; no validation or commit is needed."
 
       - name: 80% Strict same-trading-day validation
-        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false' && steps.scheduled.outputs.skip != 'true'
         run: |
           python -m unittest discover -s tests -p 'test_quote_validation.py'
           python - <<'PY'
@@ -171,7 +191,7 @@ jobs:
           PY
 
       - name: 85% Finalize ranking
-        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false' && steps.scheduled.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json
@@ -185,7 +205,7 @@ jobs:
           PY
 
       - name: 95% Publish dashboard data
-        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false'
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.freshness.outputs.skip == 'false' && steps.scheduled.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -197,5 +217,13 @@ jobs:
             git push
           fi
 
+      - name: 98% Verify GitHub Pages publication
+        if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_pages.py
+
       - name: 100% Update workflow finished
-        run: echo "Open Sesame update request completed."
+        run: |
+          echo "Open Sesame update request completed."
+          echo "Calendar skip=${{ steps.calendar.outputs.skip }}; already complete=${{ steps.scheduled.outputs.skip }}; freshness skip=${{ steps.freshness.outputs.skip }}" >> "$GITHUB_STEP_SUMMARY"

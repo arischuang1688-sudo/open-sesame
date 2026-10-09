@@ -1,0 +1,33 @@
+name: Publish tested dashboard release
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'index.html'
+      - 'docs/scheduled-updates.md'
+permissions:
+  contents: read
+  pages: write
+concurrency:
+  group: open-sesame-data-update
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Test exact release source without TWSE requests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Publish and verify existing GitHub Pages site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_pages.py

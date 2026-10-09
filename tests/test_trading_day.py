@@ -234,8 +234,8 @@ class WorkflowGuardsTest(unittest.TestCase):
                 self.assertEqual(allowed(step, outputs), publish)
 
     def test_schedule_concurrency_and_latest_checkout_preserved(self):
-        self.assertIn('cron: "5 21 * * 1-5"', WORKFLOW)
-        self.assertIn('timezone: "Asia/Taipei"', WORKFLOW)
+        self.assertIn('cron: "5 13 * * 1-5"', WORKFLOW)
+        self.assertNotRegex(WORKFLOW, r"(?m)^\s+timezone:")
         self.assertIn("group: open-sesame-data-update", WORKFLOW)
         self.assertIn("cancel-in-progress: false", WORKFLOW)
         self.assertIn("ref: ${{ github.ref }}", STEPS["10% Checkout source"])
