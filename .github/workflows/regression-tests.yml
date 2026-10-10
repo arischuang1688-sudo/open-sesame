@@ -7,6 +7,9 @@ on:
       - '.github/workflows/regression-tests.yml'
       - 'scripts/**'
       - 'tests/**'
+      - 'vercel/**'
+      - 'index.html'
+      - 'admin.html'
       - 'data/trading_calendar/**'
   pull_request:
     paths:
@@ -14,6 +17,9 @@ on:
       - '.github/workflows/regression-tests.yml'
       - 'scripts/**'
       - 'tests/**'
+      - 'vercel/**'
+      - 'index.html'
+      - 'admin.html'
       - 'data/trading_calendar/**'
 
 permissions:
@@ -29,3 +35,8 @@ jobs:
           python-version: '3.x'
       - name: Verify calendar, workflow guards and all 200 quotes without TWSE requests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify anonymous analytics and admin rendering without external requests
+        run: node --test tests/test_analytics.mjs

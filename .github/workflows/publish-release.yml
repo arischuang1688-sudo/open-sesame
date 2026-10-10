@@ -7,6 +7,7 @@ on:
       - 'scripts/**'
       - 'tests/**'
       - 'index.html'
+      - 'admin.html'
       - 'docs/scheduled-updates.md'
 permissions:
   contents: read
@@ -27,6 +28,11 @@ jobs:
           python-version: '3.x'
       - name: Test exact release source without TWSE requests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify anonymous analytics and admin rendering without external requests
+        run: node --test tests/test_analytics.mjs
       - name: Publish and verify existing GitHub Pages site
         env:
           GH_TOKEN: ${{ github.token }}
