@@ -79,12 +79,12 @@ jobs:
         id: scheduled
         if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true'
         env:
-          EXPECTED_TRADING_DATE: ${{ steps.calendar.outputs.taipei_date }}
+          EXPECTED_TRADING_DATE: ${{ steps.calendar.outputs.expected_trading_date }}
         run: python scripts/scheduled_update.py
 
       - name: Scheduled snapshot already complete
         if: steps.scheduled.outputs.skip == 'true'
-        run: echo "Today's 200-stock validated snapshot is complete; no TWSE requests or data commit needed."
+        run: echo "The expected trading day's 200-stock validated snapshot is complete; no TWSE requests or data commit needed."
 
       - name: 20% Setup Python
         if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.scheduled.outputs.skip != 'true'
@@ -100,7 +100,7 @@ jobs:
         id: freshness
         if: steps.calendar.outputs.skip == 'false' && steps.cooldown.outputs.skip != 'true' && steps.scheduled.outputs.skip != 'true'
         env:
-          EXPECTED_TRADING_DATE: ${{ steps.calendar.outputs.taipei_date }}
+          EXPECTED_TRADING_DATE: ${{ steps.calendar.outputs.expected_trading_date }}
         run: |
           python - <<'PY'
           import json, os
@@ -110,7 +110,7 @@ jobs:
             return str((((d.get('market') or {}).get('quote') or {}).get('date') or '')).strip()
           old_date=trading_date(old)
           new_date=trading_date(new)
-          from scripts.scheduled_update import require_scheduled_date
+          from scripts.scheduled_update import complete_snapshot, require_scheduled_date
           require_scheduled_date(new_date, os.environ.get('EXPECTED_TRADING_DATE', ''), os.environ.get('GITHUB_EVENT_NAME', ''))
           if not new_date:
             raise SystemExit('FRESHNESS FAILED: generated trading date is missing')
@@ -125,6 +125,11 @@ jobs:
           # 同一交易日通常不重寫；但允許把原本缺漏的個股融資資料補齊。
           margin_backfill=new_date == old_date and new_margin > old_margin
           skip=same_or_older and not margin_backfill
+          if os.environ.get('GITHUB_EVENT_NAME') == 'schedule':
+            if old_date > new_date:
+              raise SystemExit(f'SCHEDULE FRESHNESS FAILED: stored={old_date} generated={new_date}; refusing rollback')
+            # An incomplete same-date snapshot must reach strict validation too.
+            skip=complete_snapshot(old, new_date)
           print(f'[freshness] stored={old_date} generated={new_date} old_margin={old_margin} new_margin={new_margin} margin_backfill={margin_backfill} skip={skip}')
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
             f.write('skip='+('true' if skip else 'false')+'\n')
@@ -227,3 +232,4 @@ jobs:
         run: |
           echo "Open Sesame update request completed."
           echo "Calendar skip=${{ steps.calendar.outputs.skip }}; already complete=${{ steps.scheduled.outputs.skip }}; freshness skip=${{ steps.freshness.outputs.skip }}" >> "$GITHUB_STEP_SUMMARY"
+

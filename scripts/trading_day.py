@@ -1,13 +1,16 @@
 """Offline TWSE calendar gate. No market/calendar HTTP requests at runtime."""
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 CALENDAR_DIR = Path(__file__).resolve().parents[1] / "data" / "trading_calendar"
+# Conservative readiness boundary shared with the existing 21:05 main schedule.
+# Market close alone does not mean institutional and margin data are complete.
+COMPLETE_DATA_AFTER = time(21, 5)
 
 
 class CalendarError(ValueError):
@@ -40,7 +43,7 @@ def load_calendar(year, directory=CALENDAR_DIR):
 
 
 def decision(now, event_name, backfill=False, directory=CALENDAR_DIR):
-    """Use execution-time Taipei date, even after a delayed/cross-midnight start.
+    """Resolve a scheduled target from completed sessions, entirely offline.
 
     Manual backfill only bypasses a known closed date; it never bypasses missing
     annual coverage, cooldown, freshness, or quote validation.
@@ -51,15 +54,31 @@ def decision(now, event_name, backfill=False, directory=CALENDAR_DIR):
         raise CalendarError("backfill must be a boolean")
     if event_name not in ("schedule", "workflow_dispatch"):
         raise CalendarError(f"Unsupported update event: {event_name}")
-    today = now.astimezone(TAIPEI).date()
+    local = now.astimezone(TAIPEI)
+    today = local.date()
     days = load_calendar(today.year, directory)
     entry = days.get(today.isoformat())
     is_open = entry["open"] if entry else today.weekday() < 5
     reason = entry["name"] if entry else "weekday" if is_open else "weekend"
     manual_backfill = event_name == "workflow_dispatch" and backfill
+    expected = today
+    if event_name == "schedule":
+        if local.time() < COMPLETE_DATA_AFTER:
+            expected -= timedelta(days=1)
+        year = today.year
+        while True:
+            if expected.year != year:
+                year = expected.year
+                days = load_calendar(year, directory)
+            entry = days.get(expected.isoformat())
+            if (entry["open"] if entry else expected.weekday() < 5):
+                break
+            expected -= timedelta(days=1)
     return {
         "date": today.isoformat(),
-        "skip": not is_open and not manual_backfill,
+        "expected_trading_date": expected.isoformat(),
+        # Delayed schedules may recover a completed session even on a closed day.
+        "skip": event_name != "schedule" and not is_open and not manual_backfill,
         "reason": reason,
         "manual_backfill": manual_backfill,
     }
@@ -77,12 +96,14 @@ def main(now=None):
         raise SystemExit(f"CALENDAR FAILED: {exc}") from exc
     skip = str(result["skip"]).lower()
     message = (f"[calendar] taipei_date={result['date']} reason={result['reason']} "
+               f"expected_trading_date={result['expected_trading_date']} "
                f"manual_backfill={result['manual_backfill']} skip={skip}")
     print(message)
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as stream:
-            stream.write(f"skip={skip}\ntaipei_date={result['date']}\n")
+            stream.write(f"skip={skip}\ntaipei_date={result['date']}\n"
+                         f"expected_trading_date={result['expected_trading_date']}\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as stream:
@@ -91,3 +112,4 @@ def main(now=None):
 
 if __name__ == "__main__":
     main()
+

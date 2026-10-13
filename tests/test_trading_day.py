@@ -100,24 +100,29 @@ class TradingCalendarTest(unittest.TestCase):
                          {"2026-" + d for d in closed})
         for day in closed + ["10-11", "10-17", "10-18"]:
             with self.subTest(day=day):
-                self.assertTrue(self.decide("2026-" + day)["skip"])
+                self.assertTrue(self.decide("2026-" + day, "workflow_dispatch")["skip"])
 
     def test_manual_backfill_is_explicit_and_dispatch_only(self):
         for day in ("2026-10-09", "2026-10-26", "2026-10-11"):
             self.assertTrue(self.decide(day, "workflow_dispatch")["skip"])
             self.assertFalse(self.decide(day, "workflow_dispatch", True)["skip"])
-            self.assertTrue(self.decide(day, "schedule", True)["skip"])
+            self.assertFalse(self.decide(day, "schedule", True)["manual_backfill"])
 
-    def test_delayed_run_uses_taipei_execution_date(self):
+    def test_delayed_run_keeps_completed_target_after_taipei_midnight(self):
         before = gate.decision(moment("2026-10-08T15:59:59+00:00"), "schedule")
         after = gate.decision(moment("2026-10-08T16:00:00+00:00"), "schedule")
         self.assertEqual((before["date"], before["skip"]), ("2026-10-08", False))
-        self.assertEqual((after["date"], after["skip"]), ("2026-10-09", True))
+        self.assertEqual((after["date"], after["skip"]), ("2026-10-09", False))
+        self.assertEqual(before["expected_trading_date"], "2026-10-08")
+        self.assertEqual(after["expected_trading_date"], "2026-10-08")
 
     def test_unknown_year_fails_closed_including_manual_backfill(self):
         for event, backfill in [("schedule", False), ("workflow_dispatch", True)]:
             with self.assertRaisesRegex(gate.CalendarError, "2027 missing or invalid"):
                 gate.decision(moment("2026-12-31T16:00:00+00:00"), event, backfill)
+        # Resolving a prior session must also verify the previous year's calendar.
+        with self.assertRaisesRegex(gate.CalendarError, "2025 missing or invalid"):
+            gate.decision(moment("2026-01-02T06:00:00+08:00"), "schedule")
 
     def test_cross_year_selects_each_year_and_resumes_with_coverage(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -128,8 +133,8 @@ class TradingCalendarTest(unittest.TestCase):
                          "entries": [{"date": "2027-01-01", "name": "test closure", "open": False}]}
             (Path(tmp) / "twse-2027.json").write_text(json.dumps(next_year))
             self.assertFalse(self.decide("2026-12-31", directory=tmp)["skip"])
-            self.assertTrue(gate.decision(moment("2026-12-31T16:00:00+00:00"),
-                                          "schedule", directory=tmp)["skip"])
+            self.assertEqual(gate.decision(moment("2026-12-31T16:00:00+00:00"),
+                                           "schedule", directory=tmp)["expected_trading_date"], "2026-12-31")
             self.assertFalse(self.decide("2027-01-04", directory=tmp)["skip"])
 
     def test_missing_corrupt_incomplete_or_wrong_year_calendar_stops(self):
@@ -173,8 +178,8 @@ class TradingCalendarTest(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()):
                 gate.main(moment("2026-10-09T21:05:00+08:00"))
                 http.assert_not_called()
-            self.assertEqual(output.read_text(), "skip=true\ntaipei_date=2026-10-09\n")
-            self.assertIn("skip=true", summary.read_text())
+            self.assertEqual(output.read_text(), "skip=false\ntaipei_date=2026-10-09\nexpected_trading_date=2026-10-08\n")
+            self.assertIn("skip=false", summary.read_text())
 
 
 class WorkflowGuardsTest(unittest.TestCase):
@@ -245,3 +250,4 @@ class WorkflowGuardsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

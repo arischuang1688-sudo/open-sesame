@@ -1,5 +1,6 @@
 """Offline scheduled-run deduplication; never substitutes for MI_INDEX validation."""
 import json
+import math
 import os
 from datetime import date
 from pathlib import Path
@@ -17,7 +18,7 @@ def complete_snapshot(data, day, require_margin=True):
         validation = data["validation"]
         stocks = data["stocks"]
         dates = data["source_dates"]
-        codes = [str(s["code"]).strip() for s in stocks]
+        codes = [str(s["code"] or "").strip() for s in stocks]
         return (
             market["quote"]["date"] == day
             and data["trust_date"] == day
@@ -29,6 +30,9 @@ def complete_snapshot(data, day, require_margin=True):
             and validation["stock_quotes_checked"] == 200
             and len(stocks) == len(set(codes)) == 200
             and all(codes)
+            and all(type(s[k]) in (int, float) and math.isfinite(s[k])
+                    for s in stocks for k in ("close", "volume", "change"))
+            and all(s["close"] > 0 and s["volume"] >= 0 for s in stocks)
             and (not require_margin or all(s.get("margin") not in MISSING_MARGIN for s in stocks))
         )
     except (KeyError, TypeError, ValueError, IndexError, AttributeError):
@@ -36,7 +40,7 @@ def complete_snapshot(data, day, require_margin=True):
 
 
 def require_scheduled_date(generated, expected, event):
-    """A scheduled run returning yesterday is an error, not a successful no-op."""
+    """Require the resolved completed session, never an arbitrary older snapshot."""
     if event == "schedule":
         try:
             valid = bool(expected) and date.fromisoformat(expected).isoformat() == expected
@@ -73,3 +77,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

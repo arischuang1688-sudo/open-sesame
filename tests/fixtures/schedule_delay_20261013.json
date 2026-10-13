@@ -1,0 +1,29 @@
+[
+  {
+    "run_id": 38312186442,
+    "url": "https://github.com/arischuang1688-sudo/open-sesame/actions/runs/38312186442",
+    "calendar_at": "2026-10-12T21:41:29.5663337Z",
+    "old_expected": "2026-10-13",
+    "generated": "2026-10-12",
+    "calendar_log": "2026-10-12T21:41:29.5663337Z [calendar] taipei_date=2026-10-13 reason=weekday manual_backfill=False skip=false",
+    "failure_log": "2026-10-12T21:43:38.1639129Z SCHEDULE FRESHNESS FAILED: expected=2026-10-13 generated=2026-10-12; keep the published snapshot and retry at the next scheduled check"
+  },
+  {
+    "run_id": 38313099497,
+    "url": "https://github.com/arischuang1688-sudo/open-sesame/actions/runs/38313099497",
+    "calendar_at": "2026-10-12T21:50:22.1030842Z",
+    "old_expected": "2026-10-13",
+    "generated": "2026-10-12",
+    "calendar_log": "2026-10-12T21:50:22.1030842Z [calendar] taipei_date=2026-10-13 reason=weekday manual_backfill=False skip=false",
+    "failure_log": "2026-10-12T21:52:29.0797475Z SCHEDULE FRESHNESS FAILED: expected=2026-10-13 generated=2026-10-12; keep the published snapshot and retry at the next scheduled check"
+  },
+  {
+    "run_id": 38314435962,
+    "url": "https://github.com/arischuang1688-sudo/open-sesame/actions/runs/38314435962",
+    "calendar_at": "2026-10-12T22:03:44.6837840Z",
+    "old_expected": "2026-10-13",
+    "generated": "2026-10-12",
+    "calendar_log": "2026-10-12T22:03:44.6837840Z [calendar] taipei_date=2026-10-13 reason=weekday manual_backfill=False skip=false",
+    "failure_log": "2026-10-12T22:06:07.4104528Z SCHEDULE FRESHNESS FAILED: expected=2026-10-13 generated=2026-10-12; keep the published snapshot and retry at the next scheduled check"
+  }
+]
