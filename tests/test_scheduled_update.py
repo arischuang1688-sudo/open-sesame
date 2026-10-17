@@ -23,10 +23,11 @@ WORKFLOW = (ROOT / '.github/workflows/main.yml').read_text(encoding='utf-8')
 def snapshot(day='2026-10-08'):
     return {'market': {'quote': {'date': day}, 'margin': {'history': [{'date': day}]}},
             'trust_date': day,
-            'source_dates': {k: day for k in ('stock_quote', 'market_index', 'institutional', 'margin')},
+            'source_dates': {k: day for k in ('stock_quote', 'market_index', 'institutional', 'margin', 'pe_ratio')},
             'validation': {'status': 'passed', 'trading_date': day, 'same_day_sources': True,
-                           'stock_quotes_checked': 200},
+                           'stock_quotes_checked': 200, 'pe_ratios_checked': 200},
             'stocks': [{'code': str(1000+i), 'margin': '100 張',
+                        'quote_date': day, 'pe_ratio': 18.5, 'pe_under_20': True, 'pe_date': day,
                         'close': 100.25, 'volume': 1234.57, 'change': 1.5} for i in range(200)]}
 
 

@@ -5,6 +5,11 @@ import os
 from datetime import date
 from pathlib import Path
 
+try:
+    from .valuation import complete_valuation
+except ImportError:
+    from valuation import complete_valuation
+
 
 MISSING_MARGIN = (None, "", "資料待補", "待計算")
 
@@ -28,6 +33,7 @@ def complete_snapshot(data, day, require_margin=True):
             and validation["trading_date"] == day
             and validation["same_day_sources"] is True
             and validation["stock_quotes_checked"] == 200
+            and complete_valuation(data, day)
             and len(stocks) == len(set(codes)) == 200
             and all(codes)
             and all(type(s[k]) in (int, float) and math.isfinite(s[k])

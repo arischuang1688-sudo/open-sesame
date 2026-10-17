@@ -5,6 +5,7 @@ with the latest market trading day, then reuses the existing analytics pipeline.
 """
 import update_data as u
 from twse_quote import signed_change as _signed_change
+from valuation import valuation_fields
 
 MI_INDEX_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={date}&type=ALLBUT0999&response=json"
 
@@ -33,6 +34,8 @@ def fetch_base_stocks_strict():
     if not resp or resp.get("stat") != "OK":
         print(f"[error] MI_INDEX unavailable for {trading_date}")
         return None
+    if resp.get("date") != ymd:
+        raise SystemExit(f"MI_INDEX FAILED: date expected={ymd} actual={resp.get('date')}")
 
     target = None
     for t in resp.get("tables", []):
@@ -54,8 +57,9 @@ def fetch_base_stocks_strict():
     i_amt = _field_index(fields, "成交金額")
     i_sign = _field_index(fields, "漲跌(+/-)")
     i_chg = _field_index(fields, "漲跌價差", "漲跌點數")
+    i_pe = _field_index(fields, "本益比")
 
-    required = [i_code, i_name, i_close, i_vol, i_sign, i_chg]
+    required = [i_code, i_name, i_close, i_vol, i_sign, i_chg, i_pe]
     if any(i is None for i in required):
         print(f"[error] MI_INDEX fields incomplete: {fields}")
         return None
@@ -71,6 +75,9 @@ def fetch_base_stocks_strict():
             amount = u.to_float(row[i_amt]) if i_amt is not None else None
             if not code or not name or close <= 0:
                 continue
+            if len(row) <= i_pe:
+                # A truncated P/E column must not silently replace a tracked stock.
+                raise SystemExit(f"MI_INDEX FAILED: {code}:pe-field-incomplete")
             change = _signed_change(row[i_sign], row[i_chg])
             if change is None:
                 # SystemExit must not be swallowed by the row-level Exception handler.
@@ -88,6 +95,7 @@ def fetch_base_stocks_strict():
                 "change_pct": round(change / prev * 100, 2) if prev > 0 else 0,
                 "quote_date": trading_date,
                 "quote_source": "TWSE MI_INDEX",
+                **valuation_fields(code, row[i_pe], trading_date),
             })
         except Exception:
             continue

@@ -5,11 +5,17 @@ on:
       - '.github/force-update'
 permissions:
   contents: write
+  pages: write
+concurrency:
+  group: open-sesame-data-update
+  cancel-in-progress: false
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -28,10 +34,12 @@ jobs:
           new_date=trading_date(new)
           if not new_date:
             raise SystemExit('FRESHNESS FAILED: generated trading date is missing')
-          skip=bool(old_date and new_date <= old_date)
+          from scripts.valuation import complete_valuation
+          valuation_backfill=new_date == old_date and not complete_valuation(old,old_date)
+          skip=bool(old_date and new_date <= old_date) and not valuation_backfill
           print(f'[freshness] stored={old_date} generated={new_date} skip={skip}')
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
-            f.write('skip='+('true' if skip else 'false')+'\\n')
+            f.write('skip='+('true' if skip else 'false')+'\n')
           PY
       - name: No newer trading day
         if: steps.freshness.outputs.skip == 'true'
@@ -39,25 +47,27 @@ jobs:
       - name: Strict validate latest trading day
         if: steps.freshness.outputs.skip != 'true'
         run: |
+          python -m unittest discover -s tests -p 'test_quote_validation.py'
           python - <<'PY'
-          import json, urllib.request, sys
+          import json, urllib.request, sys, math
+          from scripts.twse_quote import signed_change
+          from scripts.valuation import valuation_matches
           p='data/dashboard.json'
           d=json.load(open(p,encoding='utf-8'))
           def get(u):
             r=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0'})
             return json.loads(urllib.request.urlopen(r,timeout=45).read().decode())
           def num(v):
-            try:return float(str(v).replace(',','').replace('+',''))
+            try:
+              n=float(str(v).replace(',','').replace('+',''))
+              return n if math.isfinite(n) else None
             except:return None
-          def signed_change(sign, value):
-            magnitude=abs(num(value) or 0)
-            sign=str(sign or '')
-            return -magnitude if '-' in sign else magnitude if '+' in sign else 0
           market=d.get('market') or {}; quote=market.get('quote') or {}; base=quote.get('date')
           trust=d.get('trust_date'); mh=((market.get('margin') or {}).get('history') or []); margin=mh[-1].get('date') if mh else None
           if not base: sys.exit('VALIDATION FAILED: market date missing')
           ymd=base.replace('-','')
           resp=get(f'https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={ymd}&type=ALLBUT0999&response=json')
+          if resp.get('stat') != 'OK' or resp.get('date') != ymd: sys.exit('VALIDATION FAILED: MI_INDEX date/status does not match the trading day')
           table=None
           for t in resp.get('tables',[]):
             f=t.get('fields',[])
@@ -66,26 +76,47 @@ jobs:
           if not table: sys.exit('VALIDATION FAILED: MI_INDEX stock table missing')
           fields=table.get('fields',[]); rows=table.get('data',[])
           ic=fields.index('證券代號'); iclose=fields.index('收盤價'); ivol=fields.index('成交股數'); isign=fields.index('漲跌(+/-)'); ichg=fields.index('漲跌價差')
+          if '本益比' not in fields: sys.exit('VALIDATION FAILED: MI_INDEX P/E field missing')
+          ipe=fields.index('本益比')
           by={str(r[ic]).strip():r for r in rows}
-          dates={'stock_quote':base,'market_index':base,'institutional':trust,'margin':margin}
+          dates={'stock_quote':base,'market_index':base,'institutional':trust,'margin':margin,'pe_ratio':base}
           print('[validate]',dates)
           if any(not v for v in dates.values()) or any(v!=base for v in dates.values()): sys.exit('VALIDATION FAILED: core sources are not the same latest trading day')
-          errors=[]; checked=0
-          for s in (d.get('stocks') or [])[:50]:
+          stocks=d.get('stocks') or []
+          if len(stocks) != 200: sys.exit(f'VALIDATION FAILED: expected 200 stock quotes, got {len(stocks)}')
+          errors=[]; checked=0; seen=set()
+          for s in stocks:
             code=str(s.get('code','')).strip(); src=by.get(code)
+            if not code or code in seen: errors.append(code+':missing-or-duplicate-code'); continue
+            seen.add(code)
             if not src: errors.append(code+':missing'); continue
+            if len(src) <= max(iclose, ivol, isign, ichg, ipe): errors.append(code+':incomplete'); continue
             a=num(src[iclose]); b=num(s.get('close')); av=num(src[ivol]); bv=num(s.get('volume')); ac=signed_change(src[isign],src[ichg]); bc=num(s.get('change'))
             if a is None or b is None or abs(a-b)>0.0001: errors.append(code+':close')
-            if av is not None and bv is not None and abs(av/1000-bv)>0.02: errors.append(code+':volume')
-            if bc is None or abs(ac-bc)>0.0001: errors.append(code+':change-direction')
+            if av is None or bv is None or abs(round(av/1000,2)-bv)>0.0001: errors.append(code+':volume')
+            if ac is None or bc is None or abs(ac-bc)>0.0001: errors.append(code+':change-direction')
+            if not valuation_matches(s,src[ipe],base): errors.append(code+':pe-ratio-or-date')
             checked+=1
           if errors: sys.exit('VALIDATION FAILED: '+','.join(errors[:20]))
-          if checked < 30: sys.exit(f'VALIDATION FAILED: only {checked} stock quotes checked')
-          d['validation']={'status':'passed','trading_date':base,'same_day_sources':True,'stock_quotes_checked':checked,'stock_quote_source':'TWSE MI_INDEX'}
-          d['source_dates']={**dates,'generated_at':d.get('updated_at'),'note':f'嚴格同交易日驗證已通過：核心 TWSE 資料與個股 MI_INDEX 行情均為 {base}。'}
+          if checked != len(stocks): sys.exit(f'VALIDATION FAILED: only {checked}/{len(stocks)} stock quotes checked')
+          d['validation']={'status':'passed','trading_date':base,'same_day_sources':True,'stock_quotes_checked':checked,'stock_quote_source':'TWSE MI_INDEX','pe_ratios_checked':checked}
+          d['source_dates']={**dates,'generated_at':d.get('updated_at'),'note':f'嚴格同交易日驗證已通過：核心 TWSE 資料、個股行情與本益比均為 {base}。'}
           json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)
           print('[validate] PASSED',base,checked)
           PY
+
+      - name: Finalize reference ranking
+        if: steps.freshness.outputs.skip != 'true'
+        run: |
+          python - <<'PY'
+          import json
+          from scripts.valuation import rank_stocks
+          p='data/dashboard.json'
+          d=json.load(open(p,encoding='utf-8'))
+          d['stocks']=rank_stocks(d.get('stocks',[]))
+          json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)
+          PY
+
       - name: Publish validated data
         if: steps.freshness.outputs.skip != 'true'
         run: |
@@ -93,3 +124,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add data/dashboard.json
           if git diff --cached --quiet; then echo 'No data changes'; else git commit -m 'Daily Taiwan stock update (MI_INDEX validated)'; git push; fi
+      - name: Verify GitHub Pages publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_pages.py

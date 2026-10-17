@@ -76,7 +76,11 @@ def run_inline(step, old, new, now=None):
 
 def dashboard(day="2026-10-08", margins=0):
     return {"market": {"quote": {"date": day}},
-            "stocks": [{"margin": "100 張" if i < margins else "資料待補"}
+            "source_dates": {"pe_ratio": day},
+            "validation": {"pe_ratios_checked": 200},
+            "stocks": [{"code": str(1000+i), "quote_date": day,
+                        "pe_ratio": 18.5, "pe_under_20": True, "pe_date": day,
+                        "margin": "100 張" if i < margins else "資料待補"}
                        for i in range(200)]}
 
 
@@ -237,6 +241,14 @@ class WorkflowGuardsTest(unittest.TestCase):
                        ("freshness", "skip"): run_inline(FRESHNESS, previous, candidate)["skip"]}
             for step in DOWNSTREAM:
                 self.assertEqual(allowed(step, outputs), publish)
+
+    def test_same_day_missing_valuation_can_be_backfilled_once(self):
+        new = dashboard(margins=200)
+        old = copy.deepcopy(new)
+        old['stocks'][199].pop('pe_ratio')
+        self.assertEqual(run_inline(FRESHNESS, old, new)['skip'], 'false')
+        self.assertEqual(run_inline(FRESHNESS, new, new)['skip'], 'true')
+        self.assertEqual(run_inline(FRESHNESS, old, dashboard('2026-10-07', 200))['skip'], 'true')
 
     def test_schedule_concurrency_and_latest_checkout_preserved(self):
         self.assertIn('cron: "5 13 * * 1-5"', WORKFLOW)

@@ -9,6 +9,7 @@ on:
       - 'tests/**'
       - 'vercel/**'
       - 'index.html'
+      - 'app-v2.html'
       - 'admin.html'
       - 'data/trading_calendar/**'
   pull_request:
@@ -19,6 +20,7 @@ on:
       - 'tests/**'
       - 'vercel/**'
       - 'index.html'
+      - 'app-v2.html'
       - 'admin.html'
       - 'data/trading_calendar/**'
 
@@ -38,5 +40,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Verify anonymous analytics and admin rendering without external requests
-        run: node --test tests/test_analytics.mjs
+      - name: Verify dashboard valuation and anonymous analytics without external requests
+        run: node --test tests/test_*.mjs

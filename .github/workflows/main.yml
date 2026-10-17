@@ -111,6 +111,7 @@ jobs:
           old_date=trading_date(old)
           new_date=trading_date(new)
           from scripts.scheduled_update import complete_snapshot, require_scheduled_date
+          from scripts.valuation import complete_valuation
           require_scheduled_date(new_date, os.environ.get('EXPECTED_TRADING_DATE', ''), os.environ.get('GITHUB_EVENT_NAME', ''))
           if not new_date:
             raise SystemExit('FRESHNESS FAILED: generated trading date is missing')
@@ -124,13 +125,14 @@ jobs:
           same_or_older=bool(old_date and new_date <= old_date)
           # 同一交易日通常不重寫；但允許把原本缺漏的個股融資資料補齊。
           margin_backfill=new_date == old_date and new_margin > old_margin
-          skip=same_or_older and not margin_backfill
+          valuation_backfill=new_date == old_date and not complete_valuation(old, old_date)
+          skip=same_or_older and not margin_backfill and not valuation_backfill
           if os.environ.get('GITHUB_EVENT_NAME') == 'schedule':
             if old_date > new_date:
               raise SystemExit(f'SCHEDULE FRESHNESS FAILED: stored={old_date} generated={new_date}; refusing rollback')
             # An incomplete same-date snapshot must reach strict validation too.
             skip=complete_snapshot(old, new_date)
-          print(f'[freshness] stored={old_date} generated={new_date} old_margin={old_margin} new_margin={new_margin} margin_backfill={margin_backfill} skip={skip}')
+          print(f'[freshness] stored={old_date} generated={new_date} old_margin={old_margin} new_margin={new_margin} margin_backfill={margin_backfill} valuation_backfill={valuation_backfill} skip={skip}')
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
             f.write('skip='+('true' if skip else 'false')+'\n')
           PY
@@ -146,6 +148,7 @@ jobs:
           python - <<'PY'
           import json, urllib.request, sys, math
           from scripts.twse_quote import signed_change
+          from scripts.valuation import valuation_matches
           p='data/dashboard.json'
           d=json.load(open(p,encoding='utf-8'))
           def get(u):
@@ -161,6 +164,7 @@ jobs:
           if not base: sys.exit('VALIDATION FAILED: market date missing')
           ymd=base.replace('-','')
           resp=get(f'https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={ymd}&type=ALLBUT0999&response=json')
+          if resp.get('stat') != 'OK' or resp.get('date') != ymd: sys.exit('VALIDATION FAILED: MI_INDEX date/status does not match the trading day')
           table=None
           for t in resp.get('tables',[]):
             f=t.get('fields',[])
@@ -169,8 +173,10 @@ jobs:
           if not table: sys.exit('VALIDATION FAILED: MI_INDEX stock table missing')
           fields=table.get('fields',[]); rows=table.get('data',[])
           ic=fields.index('證券代號'); iclose=fields.index('收盤價'); ivol=fields.index('成交股數'); isign=fields.index('漲跌(+/-)'); ichg=fields.index('漲跌價差')
+          if '本益比' not in fields: sys.exit('VALIDATION FAILED: MI_INDEX P/E field missing')
+          ipe=fields.index('本益比')
           by={str(r[ic]).strip():r for r in rows}
-          dates={'stock_quote':base,'market_index':base,'institutional':trust,'margin':margin}
+          dates={'stock_quote':base,'market_index':base,'institutional':trust,'margin':margin,'pe_ratio':base}
           print('[validate]',dates)
           if any(not v for v in dates.values()) or any(v!=base for v in dates.values()): sys.exit('VALIDATION FAILED: core sources are not the same latest trading day')
           stocks=d.get('stocks') or []
@@ -181,16 +187,17 @@ jobs:
             if not code or code in seen: errors.append(code+':missing-or-duplicate-code'); continue
             seen.add(code)
             if not src: errors.append(code+':missing'); continue
-            if len(src) <= max(iclose, ivol, isign, ichg): errors.append(code+':incomplete'); continue
+            if len(src) <= max(iclose, ivol, isign, ichg, ipe): errors.append(code+':incomplete'); continue
             a=num(src[iclose]); b=num(s.get('close')); av=num(src[ivol]); bv=num(s.get('volume')); ac=signed_change(src[isign],src[ichg]); bc=num(s.get('change'))
             if a is None or b is None or abs(a-b)>0.0001: errors.append(code+':close')
             if av is None or bv is None or abs(round(av/1000,2)-bv)>0.0001: errors.append(code+':volume')
             if ac is None or bc is None or abs(ac-bc)>0.0001: errors.append(code+':change-direction')
+            if not valuation_matches(s,src[ipe],base): errors.append(code+':pe-ratio-or-date')
             checked+=1
           if errors: sys.exit('VALIDATION FAILED: '+','.join(errors[:20]))
           if checked != len(stocks): sys.exit(f'VALIDATION FAILED: only {checked}/{len(stocks)} stock quotes checked')
-          d['validation']={'status':'passed','trading_date':base,'same_day_sources':True,'stock_quotes_checked':checked,'stock_quote_source':'TWSE MI_INDEX'}
-          d['source_dates']={**dates,'generated_at':d.get('updated_at'),'note':f'嚴格同交易日驗證已通過：核心 TWSE 資料與個股 MI_INDEX 行情均為 {base}。'}
+          d['validation']={'status':'passed','trading_date':base,'same_day_sources':True,'stock_quotes_checked':checked,'stock_quote_source':'TWSE MI_INDEX','pe_ratios_checked':checked}
+          d['source_dates']={**dates,'generated_at':d.get('updated_at'),'note':f'嚴格同交易日驗證已通過：核心 TWSE 資料、個股行情與本益比均為 {base}。'}
           json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)
           print('[validate] PASSED',base,checked)
           PY
@@ -200,10 +207,10 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          from scripts.valuation import rank_stocks
           p='data/dashboard.json'
           d=json.load(open(p,encoding='utf-8'))
-          stocks=d.get('stocks',[])
-          stocks.sort(key=lambda x:(bool(x.get('priority')),x.get('cond_count',0),x.get('change_pct',0),x.get('volume',0)),reverse=True)
+          stocks=rank_stocks(d.get('stocks',[]))
           d['stocks']=stocks
           json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False,indent=2)
           print(f'[rank] finalized {len(stocks)} stocks')

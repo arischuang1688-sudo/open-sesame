@@ -7,6 +7,7 @@ on:
       - 'scripts/**'
       - 'tests/**'
       - 'index.html'
+      - 'app-v2.html'
       - 'admin.html'
       - 'docs/scheduled-updates.md'
 permissions:
@@ -31,8 +32,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Verify anonymous analytics and admin rendering without external requests
-        run: node --test tests/test_analytics.mjs
+      - name: Verify dashboard valuation and anonymous analytics without external requests
+        run: node --test tests/test_*.mjs
       - name: Publish and verify existing GitHub Pages site
         env:
           GH_TOKEN: ${{ github.token }}

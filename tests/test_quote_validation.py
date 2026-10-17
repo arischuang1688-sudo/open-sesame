@@ -20,7 +20,7 @@ STEP = WORKFLOW.read_text(encoding='utf-8').split(
 VALIDATOR = compile(textwrap.dedent(STEP.split("python - <<'PY'\n", 1)[1]
                                   .split('\n          PY', 1)[0]), str(WORKFLOW), 'exec')
 DATE = '2026-10-01'
-FIELDS = ['證券代號', '證券名稱', '收盤價', '成交股數', '漲跌(+/-)', '漲跌價差']
+FIELDS = ['證券代號', '證券名稱', '收盤價', '成交股數', '漲跌(+/-)', '漲跌價差', '本益比']
 
 
 def fixture():
@@ -29,9 +29,10 @@ def fixture():
         change = (-1.5, 0, 1.5)[i % 3]
         sign = '-' if change < 0 else '+' if change > 0 else ' '
         code = str(1000 + i)
-        stocks.append(dict(code=code, close=100.25, volume=1234.57, change=change))
+        stocks.append(dict(code=code, close=100.25, volume=1234.57, change=change,
+                           quote_date=DATE, pe_ratio=18.5, pe_under_20=True, pe_date=DATE))
         rows.append([code, '測試', '100.25', '1,234,567',
-                     f'<p style="color:red">{sign}</p>', str(abs(change))])
+                     f'<p style="color:red">{sign}</p>', str(abs(change)), '18.50'])
     return (dict(stocks=stocks, trust_date=DATE, updated_at=DATE,
                  market=dict(quote=dict(date=DATE), margin=dict(history=[dict(date=DATE)]))),
             dict(stat='OK', date='20261001', tables=[dict(fields=FIELDS[:], data=rows)]))
@@ -59,6 +60,7 @@ class QuoteValidationTest(unittest.TestCase):
         if not error:
             saved = json.loads(''.join(c.args[0] for c in file().write.call_args_list))
             self.assertEqual(saved['validation']['stock_quotes_checked'], 200)
+            self.assertEqual(saved['validation']['pe_ratios_checked'], 200)
             self.assertEqual(saved['stocks'], dashboard['stocks'])
             self.assertIn(f'[validate] PASSED {date} 200', output.getvalue())
 
@@ -105,7 +107,7 @@ class QuoteValidationTest(unittest.TestCase):
         for sign, magnitude in [(None, '0'), ('X', '1.5'), ('?', '0'), ('', '1.5')]:
             with self.subTest(sign=sign, magnitude=magnitude):
                 d, r = fixture()
-                r['tables'][0]['data'][199][4:] = [sign, magnitude]
+                r['tables'][0]['data'][199][4:6] = [sign, magnitude]
                 self.validate(d, r, '1199:change-direction')
 
     def test_missing_or_duplicate_dashboard_stock_fails(self):
@@ -143,6 +145,8 @@ class QuoteValidationTest(unittest.TestCase):
                 d['stocks'][199] = stocks[0].copy()
                 d['trust_date'] = d['market']['quote']['date'] = '2026-10-02'
                 d['market']['margin']['history'][-1]['date'] = '2026-10-02'
+                for stock in d['stocks']:
+                    stock['quote_date'] = stock['pe_date'] = '2026-10-02'
                 r['date'] = RECORDED['date']
                 recorded = dict(zip(RECORDED['tables'][0]['fields'], RECORDED['tables'][0]['data'][0]))
                 r['tables'][0]['data'][199] = [recorded[f] for f in FIELDS]

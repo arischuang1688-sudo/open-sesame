@@ -16,6 +16,7 @@ import os
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from valuation import rank_stocks
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_PATH = os.path.join(BASE_DIR, "data", "dashboard.json")
@@ -429,7 +430,7 @@ def main():
             "margin": margin_summary,
             "quote": market,
         },
-        "stocks": stocks,
+        "stocks": rank_stocks(stocks),
     }
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
