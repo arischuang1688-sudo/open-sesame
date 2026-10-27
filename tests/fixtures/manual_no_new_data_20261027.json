@@ -1,0 +1,147 @@
+{
+  "source": "https://github.com/arischuang1688-sudo/open-sesame/actions/runs/40441287252",
+  "run": {
+    "id": 40441287252,
+    "path": ".github/workflows/main.yml",
+    "head_branch": "main",
+    "event": "workflow_dispatch",
+    "display_title": "Open Sesame Update web_mvq3ftw9_4ov1x04g",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-10-27T02:56:03Z",
+    "run_started_at": "2026-10-27T02:56:03Z",
+    "html_url": "https://github.com/arischuang1688-sudo/open-sesame/actions/runs/40441287252"
+  },
+  "jobs": [
+    {
+      "id": 121981994799,
+      "name": "update",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 40441287252,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "10% Checkout source",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "12% Offline TWSE trading day guard",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Market closed - keep current data",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 4
+        },
+        {
+          "name": "15% Cooldown guard",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Cooldown active - reuse current data",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 6
+        },
+        {
+          "name": "18% Scheduled snapshot guard",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Scheduled snapshot already complete",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 8
+        },
+        {
+          "name": "20% Setup Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "60% Generate latest date-specific TWSE data",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "65% New trading day guard",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        },
+        {
+          "name": "No newer trading day - keep current data",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "80% Strict same-trading-day validation",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 13
+        },
+        {
+          "name": "85% Finalize ranking",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 14
+        },
+        {
+          "name": "95% Publish dashboard data",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 15
+        },
+        {
+          "name": "98% Verify GitHub Pages publication",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16
+        },
+        {
+          "name": "100% Update workflow finished",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17
+        },
+        {
+          "name": "Post 20% Setup Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 33
+        },
+        {
+          "name": "Post 10% Checkout source",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 34
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 35
+        }
+      ]
+    }
+  ]
+}
