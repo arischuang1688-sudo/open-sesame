@@ -30,6 +30,60 @@ async function render(page,data){
 }
 
 for(const page of pages){
+  test(`${page}: unknown and legacy uncomputed signals are not failed signals or technical ranks`,async()=>{
+    const legacy=stock({code:'1001',month_week:'僅前30名計算',kd:'僅前30名計算',
+      relative:'僅前30名計算',priority:true,cond_count:4});
+    const unknown=stock({code:'1002',conditions:{ma:null,kd:null,trust:true,market:false}});
+    const failed=stock({code:'1003'});
+    const {elements,rows}=await render(page,dashboard([legacy,unknown,failed]));
+    assert.deepEqual(rows.map(row=>row[1].content.match(/<b>(\d+)/)[1]),['1003','1001','1002']);
+    assert.deepEqual(rows.map(row=>row[0].content),['1','—','—']);
+    assert.match(rows[0][11].content,/✗月週線↑/);
+    assert.match(rows[0][11].content,/✗KD交叉/);
+    for(const row of rows.slice(1)){
+      assert.match(row[11].content,/—月週線↑（待計算）/);
+      assert.match(row[11].content,/—KD交叉（待計算）/);
+      assert.doesNotMatch(row[11].content,/✗(?:月週線↑|KD交叉)|tag pri/);
+      assert.match(row[11].content,/待評估/);
+      assert.match(row[11].content,/已確認 2\/4 項/);
+    }
+    for(const column of [7,8,9])assert.equal(rows[1][column].content,'尚未計算');
+    assert.match(elements.tbody.innerHTML,/完整訊號組（1 檔）/);
+    assert.match(elements.tbody.innerHTML,/待評估組（2 檔）/);
+    assert.match(elements.summary.innerHTML,/四項訊號完整 1 檔・待評估 2 檔/);
+    assert.match(elements.summary.innerHTML,/⭐ 優先買入<\/div><div class="big">0 檔/);
+  });
+
+  test(`${page}: pending stocks use P/E then amount rather than partial passes`,async()=>{
+    const {rows,elements}=await render(page,dashboard([
+      stock({code:'1001',pe_ratio:20.01,pe_under_20:false,amount:1000,
+        conditions:{ma:null,kd:true,trust:true,market:true}}),
+      stock({code:'1002',pe_ratio:20,pe_under_20:true,amount:1,
+        conditions:{ma:null,kd:null,trust:null,market:null}}),
+      stock({code:'1003',pe_ratio:18,pe_under_20:true,amount:100,
+        conditions:{ma:null,kd:null,trust:true,market:true}})
+    ]));
+    assert.deepEqual(rows.map(row=>row[1].content.match(/<b>(\d+)/)[1]),['1003','1002','1001']);
+    assert.ok(rows.every(row=>row[0].content==='—'));
+    assert.doesNotMatch(elements.tbody.innerHTML,/完整訊號組（/);
+    assert.match(elements.tbody.innerHTML,/待評估組（3 檔）/);
+    assert.match(rows[1][11].content,/已確認 0\/4 項・符合 0 項/);
+  });
+
+  test(`${page}: missing conditions and insufficient history remain unknown`,async()=>{
+    const {rows}=await render(page,dashboard([
+      stock({code:'1001',conditions:undefined,priority:true}),
+      stock({code:'1002',month_week:'資料不足',kd:'資料待補'}),
+      stock({code:'1003',conditions:{ma:true,kd:true,trust:'false',market:1}})
+    ]));
+    assert.ok(rows.every(row=>row[0].content==='—'));
+    assert.ok(rows.every(row=>!row[11].content.includes('tag pri')));
+    assert.match(rows[0][11].content,/已確認 0\/4 項/);
+    assert.match(rows[1][11].content,/已確認 2\/4 項/);
+    assert.match(rows[2][11].content,/—投信買超（待計算）/);
+    assert.match(rows[2][11].content,/—大盤轉強（待計算）/);
+  });
+
   test(`${page}: P/E values and summary require valid numbers and a validated inclusive threshold`,async()=>{
     const values=[
       {pe_ratio:12.5,pe_under_20:true},
@@ -115,10 +169,10 @@ for(const page of pages){
     assert.match(html[page],/原有優先訊號 → 條件數 → 本益比20倍內 → 成交金額/);
     assert.match(html[page],/0 &lt; 本益比 ≤ 20/);
     assert.match(html[page],/未提供／不適用不加分/);
-    assert.match(html[page],/(?:正式版|版本) 2026-10-17/);
+    assert.match(html[page],/(?:正式版|版本) 2026-10-29/);
     const record=html[page].match(/程式進版修改紀錄<\/b><div>([^<]+)<\/div>/)[1];
     assert.ok(record.length<=100);
-    assert.match(record,/^2026-10-17：/);
+    assert.match(record,/^2026-10-29：/);
     assert.doesNotMatch(html[page],/colspan="12"/);
   });
 }
