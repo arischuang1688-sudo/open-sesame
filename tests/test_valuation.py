@@ -22,6 +22,10 @@ def stock(code='2330', pe=18.5, **overrides):
                 volume=100, change_pct=0, quote_date=DATE,
                 **valuation.valuation_fields(code, pe, DATE))
     item.update(overrides)
+    # Ranking derives its evidence from the conditions, not cached counts.
+    count = 4 if item['priority'] else item['cond_count']
+    item.setdefault('conditions', dict(zip(valuation.CONDITION_KEYS,
+                                          [i < count for i in range(4)])))
     return item
 
 

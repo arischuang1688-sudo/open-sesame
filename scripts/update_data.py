@@ -406,13 +406,20 @@ def main():
             else:
                 s["month_week"] = s["kd"] = s["relative"] = PENDING
         else:
-            s["month_week"] = s["kd"] = s["relative"] = f"僅前{HISTORY_TOP}名計算"
+            s["month_week"] = s["kd"] = s["relative"] = "尚未計算"
 
-        conds = {"ma": bool(s.get("month_up")) and bool(s.get("week_up")), "kd": bool(s.get("kd_golden")), "trust": bool(s.get("trust_net") and s["trust_net"] > 0), "market": bool(market_trend_up)}
+        # None means unknown, not a confirmed failed signal. Both moving
+        # averages must be computed before their combined condition is known.
+        ma_known = all(type(s.get(k)) is bool for k in ("month_up", "week_up"))
+        conds = {
+            "ma": s["month_up"] and s["week_up"] if ma_known else None,
+            "kd": s.get("kd_golden"),
+            "trust": s["trust_net"] > 0 if s["trust_net"] is not None else None,
+            "market": market_trend_up,
+        }
         s["conditions"] = conds
-        s["cond_count"] = sum(conds.values())
-        s["priority"] = all(conds.values())
-        s["status"] = "優先買入" if s["priority"] else "觀察"
+        # rank_stocks derives counts, completeness and priority from these
+        # tri-state values; incomplete stocks never compete on partial counts.
         if s.get("outperform"):
             s["reason"] = build_reason(s)
             s["news"] = PENDING
@@ -421,6 +428,7 @@ def main():
 
     if trust is None:
         print("[warn] T86 unavailable → 投信欄位標示待補")
+    stocks = rank_stocks(stocks)
     result = {
         "updated_at": datetime.now(TW_TZ).isoformat(),
         "trust_date": trust_date,
@@ -430,7 +438,7 @@ def main():
             "margin": margin_summary,
             "quote": market,
         },
-        "stocks": rank_stocks(stocks),
+        "stocks": stocks,
     }
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
