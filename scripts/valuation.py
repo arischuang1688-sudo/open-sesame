@@ -8,6 +8,32 @@ import re
 
 
 PE_LIMIT = 20.0
+CONDITION_KEYS = ("ma", "kd", "trust", "market")
+
+
+def signal_fields(stock):
+    """Keep unknown distinct from False, including pre-migration snapshots.
+
+    cond_count counts confirmed passes only; compare it only when all four
+    conditions are known. Never infer priority from a partial pass rate.
+    """
+    original = stock.get("conditions") or {}
+    conditions = {key: original.get(key) if type(original.get(key)) is bool else None
+                  for key in CONDITION_KEYS}
+    for key, label in (("ma", "month_week"), ("kd", "kd")):
+        value = stock.get(label, "") or ""
+        if value.startswith("僅前") or value in (
+                "尚未計算", "資料待補", "待計算", "資料不足"):
+            conditions[key] = None
+    known = sum(value is not None for value in conditions.values())
+    passed = sum(value is True for value in conditions.values())
+    complete = known == len(CONDITION_KEYS)
+    priority = passed == len(CONDITION_KEYS) if complete else None
+    return {"conditions": conditions, "cond_count": passed,
+            "cond_known_count": known, "signals_complete": complete,
+            "ranking_group": "complete" if complete else "pending",
+            "priority": priority,
+            "status": "待評估" if not complete else "優先買入" if priority else "觀察"}
 
 
 def positive_pe(value):
@@ -60,18 +86,31 @@ def _finite_number(value):
 
 
 def ranking_key(stock):
+    signals = signal_fields(stock)
     pe = stock_pe(stock.get("code", ""), stock.get("pe_ratio"))
     preferred = (stock.get("pe_under_20") is True
                  and pe is not None and pe <= PE_LIMIT)
-    return (-int(bool(stock.get("priority"))),
-            -_finite_number(stock.get("cond_count")),
+    return (0 if signals["signals_complete"] else 1,
+            -int(signals["priority"] is True),
+            -signals["cond_count"] if signals["signals_complete"] else 0,
             -int(preferred), -_finite_number(stock.get("amount")),
             -_finite_number(stock.get("volume")), str(stock.get("code", "")))
 
 
 def rank_stocks(stocks):
-    """Keep signal strength first, then P/E preference and traded value."""
-    return sorted(stocks, key=ranking_key)
+    """Rank complete signals; list pending stocks separately by P/E/value.
+
+    Group placement is presentation order, not a cross-group investment rank.
+    Return new records so a caller's validated quote snapshot is not mutated.
+    """
+    normalized = []
+    for stock in stocks:
+        item = {**stock, **signal_fields(stock)}
+        for key in ("month_week", "kd", "relative"):
+            if str(item.get(key, "")).startswith("僅前"):
+                item[key] = "尚未計算"
+        normalized.append(item)
+    return sorted(normalized, key=ranking_key)
 
 
 def complete_valuation(data, day):
